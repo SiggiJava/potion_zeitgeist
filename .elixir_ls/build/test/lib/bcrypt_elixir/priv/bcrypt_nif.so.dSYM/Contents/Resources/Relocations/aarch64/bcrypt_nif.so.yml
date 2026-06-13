@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/michaelpiegza/Elixir/potion_zeitgeist/.elixir_ls/build/test/lib/bcrypt_elixir/priv/bcrypt_nif.so'
+relocations:     []
+...
