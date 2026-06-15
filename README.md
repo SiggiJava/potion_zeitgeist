@@ -1,5 +1,7 @@
 # Potion Zeitgeist
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A time clocking application for small and medium-sized businesses. Built with Elixir, Phoenix LiveView, and PostgreSQL.
 
 ## Features
@@ -232,3 +234,9 @@ docker compose exec app ./bin/potion_zeitgeist eval "PotionZeitgeist.Release.mig
 ```bash
 docker compose exec app ./bin/potion_zeitgeist eval "PotionZeitgeist.Release.rollback(PotionZeitgeist.Repo, <version>)"
 ```
+
+---
+
+## License
+
+[MIT](LICENSE) — Copyright (c) 2026 Michael Piegza
