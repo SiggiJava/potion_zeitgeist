@@ -1,0 +1,12 @@
+_build/
+deps/
+.git/
+.elixir_ls/
+priv/static/assets/
+priv/static/cache_manifest.json
+assets/node_modules/
+.env
+cover/
+doc/
+tmp/
+*.md

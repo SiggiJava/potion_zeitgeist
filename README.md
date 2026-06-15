@@ -123,4 +123,112 @@ mix release
 DATABASE_URL=... SECRET_KEY_BASE=... VAULT_KEY=... PHX_HOST=... bin/potion_zeitgeist start
 ```
 
-See the [Phoenix deployment guide](https://hexdocs.pm/phoenix/deployment.html) for full instructions including Dockerfile and reverse proxy setup.
+See the [Phoenix deployment guide](https://hexdocs.pm/phoenix/deployment.html) for full instructions including reverse proxy setup.
+
+---
+
+## Docker
+
+The application ships with a `Dockerfile` and `docker-compose.yml`. The database runs in a separate container with a named Docker volume so that **upgrading the application never touches the database data**.
+
+Pre-built images are published to Docker Hub: [`siggijava/potion_zeitgeist`](https://hub.docker.com/r/siggijava/potion_zeitgeist)
+
+---
+
+### Option A — Pull from Docker Hub (recommended)
+
+No Elixir or Node.js toolchain required. Use the published image directly.
+
+#### 1. Create your `.env` file
+
+```bash
+cp .env.example .env
+```
+
+Fill in the three required values (`SECRET_KEY_BASE`, `VAULT_KEY`, `PHX_HOST`). If you don't have an Elixir install to generate them, use these one-liners via Docker:
+
+```bash
+# Generate SECRET_KEY_BASE
+docker run --rm hexpm/elixir:1.16-erlang-26-alpine mix phx.gen.secret
+
+# Generate VAULT_KEY
+docker run --rm hexpm/elixir:1.16-erlang-26-alpine \
+  sh -c "iex -e ':crypto.strong_rand_bytes(32) |> Base.encode64() |> IO.puts()'"
+```
+
+#### 2. Start with the pre-built image
+
+Replace the `build: .` line in `docker-compose.yml` with the Hub image, then start:
+
+```yaml
+app:
+  image: siggijava/potion_zeitgeist:latest
+  # (remove the "build: ." line)
+```
+
+```bash
+docker compose up
+```
+
+#### 3. Updating to a newer release
+
+```bash
+docker compose pull app
+docker compose up app
+```
+
+The `db` container and its volume are never touched during an update.
+
+---
+
+### Option B — Build from source
+
+#### 1. Create your `.env` file
+
+```bash
+cp .env.example .env
+```
+
+Fill in the three required values:
+
+```bash
+# Generate secret key base
+mix phx.gen.secret
+
+# Generate vault key
+iex -e ':crypto.strong_rand_bytes(32) |> Base.encode64() |> IO.puts()'
+```
+
+#### 2. Start both containers
+
+```bash
+docker compose up --build
+```
+
+The app container waits for PostgreSQL to be healthy, then runs all pending migrations automatically before starting the server.
+
+#### Updating the application
+
+Rebuild and restart only the `app` container. The `db` container and its volume are untouched:
+
+```bash
+docker compose up --build app
+```
+
+---
+
+### First-run admin setup
+
+Visit [http://localhost:4000/setup](http://localhost:4000/setup) to create the initial administrator account.
+
+### Manual migration (if needed)
+
+```bash
+docker compose exec app ./bin/potion_zeitgeist eval "PotionZeitgeist.Release.migrate()"
+```
+
+### Rollback a migration
+
+```bash
+docker compose exec app ./bin/potion_zeitgeist eval "PotionZeitgeist.Release.rollback(PotionZeitgeist.Repo, <version>)"
+```

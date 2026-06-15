@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: potion_zeitgeist_prod
+    volumes:
+      # Named volume keeps data across container rebuilds and updates
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: ecto://postgres:postgres@db/potion_zeitgeist_prod
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      VAULT_KEY: ${VAULT_KEY}
+      PHX_HOST: ${PHX_HOST:-localhost}
+      PORT: "4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  # Persists database data independently of the app container lifecycle
+  postgres_data:
