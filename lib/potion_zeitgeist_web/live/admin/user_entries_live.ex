@@ -104,7 +104,9 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
 
   defp parse_datetime(value) when is_binary(value) do
     case NaiveDateTime.from_iso8601(String.replace(value, "T", " ") <> ":00") do
-      {:ok, dt} -> dt
+      {:ok, dt} ->
+        dt
+
       _ ->
         case NaiveDateTime.from_iso8601(value) do
           {:ok, dt} -> dt
@@ -129,8 +131,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
     <div class="space-y-6">
       <div class="flex items-center gap-3 flex-wrap">
         <.link navigate={~p"/admin/users"} class="btn btn-ghost btn-sm gap-1">
-          <.icon name="hero-arrow-left" class="size-4" />
-          Back
+          <.icon name="hero-arrow-left" class="size-4" /> Back
         </.link>
         <div class="flex-1">
           <h1 class="text-2xl font-bold">{@viewed_user.name}'s Entries</h1>
@@ -143,8 +144,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
             class="btn btn-outline btn-sm gap-2"
             title="One total per day, split by project"
           >
-            <.icon name="hero-arrow-down-tray" class="size-4" />
-            Export daily totals
+            <.icon name="hero-arrow-down-tray" class="size-4" /> Export daily totals
           </a>
           <a
             id="export-entries"
@@ -152,8 +152,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
             class="btn btn-ghost btn-sm gap-2"
             title="Every clock-in/clock-out pair"
           >
-            <.icon name="hero-table-cells" class="size-4" />
-            Export entries
+            <.icon name="hero-table-cells" class="size-4" /> Export entries
           </a>
         </div>
       </div>
@@ -268,7 +267,11 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
                 <input
                   type="datetime-local"
                   name={f[:clock_out].name}
-                  value={if @editing_entry.clock_out, do: format_dt_for_input(@editing_entry.clock_out), else: ""}
+                  value={
+                    if @editing_entry.clock_out,
+                      do: format_dt_for_input(@editing_entry.clock_out),
+                      else: ""
+                  }
                   class="input input-bordered w-full"
                 />
                 <%= if error = List.first(f[:clock_out].errors) do %>

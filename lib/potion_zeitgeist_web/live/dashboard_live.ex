@@ -158,8 +158,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
               </form>
             <% end %>
             <button phx-click="clock_out" class="btn btn-error btn-lg gap-2">
-              <.icon name="hero-stop-circle" class="size-6" />
-              Clock Out
+              <.icon name="hero-stop-circle" class="size-6" /> Clock Out
             </button>
           <% else %>
             <p class="text-base-content/60 text-sm mb-4">
@@ -180,8 +179,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
                 </div>
               <% end %>
               <button type="submit" class="btn btn-success btn-lg gap-2">
-                <.icon name="hero-play-circle" class="size-6" />
-                Clock In
+                <.icon name="hero-play-circle" class="size-6" /> Clock In
               </button>
             </form>
           <% end %>
@@ -192,8 +190,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
       <div class="card bg-base-100 shadow-lg">
         <div class="card-body">
           <h2 class="card-title">
-            <.icon name="hero-clock" class="size-5" />
-            Today's Summary
+            <.icon name="hero-clock" class="size-5" /> Today's Summary
           </h2>
           <div class="stats stats-vertical sm:stats-horizontal w-full shadow-none">
             <div class="stat">
@@ -209,7 +206,9 @@ defmodule PotionZeitgeistWeb.DashboardLive do
                 {if @active_entry, do: "Active", else: "Inactive"}
               </div>
               <div class="stat-desc">
-                {if @active_entry, do: "Clock out to stop tracking", else: "Clock in to start tracking"}
+                {if @active_entry,
+                  do: "Clock out to stop tracking",
+                  else: "Clock in to start tracking"}
               </div>
             </div>
           </div>
@@ -218,7 +217,10 @@ defmodule PotionZeitgeistWeb.DashboardLive do
 
       <% # Quick Links %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <.link navigate={~p"/entries"} class="card bg-base-100 shadow hover:shadow-md transition-shadow">
+        <.link
+          navigate={~p"/entries"}
+          class="card bg-base-100 shadow hover:shadow-md transition-shadow"
+        >
           <div class="card-body flex-row items-center gap-4">
             <div class="rounded-full bg-primary/10 p-3">
               <.icon name="hero-list-bullet" class="size-6 text-primary" />
@@ -230,7 +232,10 @@ defmodule PotionZeitgeistWeb.DashboardLive do
           </div>
         </.link>
 
-        <a href={~p"/export/my-entries"} class="card bg-base-100 shadow hover:shadow-md transition-shadow">
+        <a
+          href={~p"/export/my-entries"}
+          class="card bg-base-100 shadow hover:shadow-md transition-shadow"
+        >
           <div class="card-body flex-row items-center gap-4">
             <div class="rounded-full bg-secondary/10 p-3">
               <.icon name="hero-arrow-down-tray" class="size-6 text-secondary" />

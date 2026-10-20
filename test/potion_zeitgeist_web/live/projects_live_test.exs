@@ -8,7 +8,9 @@ defmodule PotionZeitgeistWeb.Admin.ProjectsLiveTest do
 
   test "admins can create projects", %{conn: conn} do
     admin = admin_fixture()
-    {:ok, view, _html} = conn |> Plug.Test.init_test_session(user_id: admin.id) |> live(~p"/admin/projects")
+
+    {:ok, view, _html} =
+      conn |> Plug.Test.init_test_session(user_id: admin.id) |> live(~p"/admin/projects")
 
     view |> element("#new-project") |> render_click()
 

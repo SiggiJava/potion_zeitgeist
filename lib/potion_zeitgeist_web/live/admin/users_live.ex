@@ -132,12 +132,10 @@ defmodule PotionZeitgeistWeb.Admin.UsersLive do
             class="btn btn-outline btn-sm gap-2"
             title="Daily totals of all users, split by project"
           >
-            <.icon name="hero-arrow-down-tray" class="size-4" />
-            Export all daily totals
+            <.icon name="hero-arrow-down-tray" class="size-4" /> Export all daily totals
           </a>
           <button phx-click="show_create" class="btn btn-primary btn-sm gap-2">
-            <.icon name="hero-user-plus" class="size-4" />
-            New User
+            <.icon name="hero-user-plus" class="size-4" /> New User
           </button>
         </div>
       </div>

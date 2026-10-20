@@ -34,7 +34,9 @@ defmodule PotionZeitgeist.TimeTracking.Export do
         by_project: by_project
       }
     end)
-    |> Enum.sort_by(fn day -> {Date.to_iso8601(day.date), to_string(day.user_name), day.user_id} end)
+    |> Enum.sort_by(fn day ->
+      {Date.to_iso8601(day.date), to_string(day.user_name), day.user_id}
+    end)
   end
 
   @doc """
