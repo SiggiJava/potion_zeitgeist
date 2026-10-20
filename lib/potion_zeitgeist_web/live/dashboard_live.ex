@@ -33,7 +33,6 @@ defmodule PotionZeitgeistWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:today_seconds, today_seconds)
-     |> assign(:projects, bookable_projects(active_entry))
      |> assign(:now, NaiveDateTime.utc_now())}
   end
 
