@@ -15,7 +15,7 @@ defmodule PotionZeitgeist.Projects.Project do
   def changeset(project, attrs) do
     project
     |> cast(attrs, [:name, :description, :active])
-    |> update_change(:name, &String.trim/1)
+    |> update_change(:name, &(&1 && String.trim(&1)))
     |> validate_required([:name])
     |> validate_length(:name, max: 120)
     |> unique_constraint(:name, message: "already exists")

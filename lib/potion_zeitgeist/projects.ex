@@ -3,7 +3,6 @@ defmodule PotionZeitgeist.Projects do
 
   alias PotionZeitgeist.Repo
   alias PotionZeitgeist.Projects.Project
-  alias PotionZeitgeist.TimeTracking.TimeEntry
 
   def list_projects do
     Repo.all(from p in Project, order_by: [asc: p.name])
@@ -52,10 +51,18 @@ defmodule PotionZeitgeist.Projects do
   archived instead (`active: false`), so recorded working time keeps its project.
   """
   def delete_project(%Project{} = project) do
-    if Repo.exists?(from e in TimeEntry, where: e.project_id == ^project.id) do
-      {:error, :has_entries}
-    else
-      Repo.delete(project)
+    project
+    |> Ecto.Changeset.change()
+    |> Ecto.Changeset.no_assoc_constraint(:time_entries)
+    |> Repo.delete()
+    |> case do
+      {:error, %Ecto.Changeset{errors: errors} = changeset} ->
+        if Keyword.has_key?(errors, :time_entries),
+          do: {:error, :has_entries},
+          else: {:error, changeset}
+
+      result ->
+        result
     end
   end
 

@@ -22,6 +22,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
      |> assign(:active_entry, active_entry)
      |> assign(:today_seconds, today_seconds)
      |> assign(:projects, bookable_projects(active_entry))
+     |> assign(:project_select_rev, 0)
      |> assign(:now, NaiveDateTime.utc_now())}
   end
 
@@ -53,8 +54,11 @@ defmodule PotionZeitgeistWeb.DashboardLive do
       {:error, :already_clocked_in} ->
         {:noreply, put_flash(socket, :error, "You are already clocked in.")}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Could not clock in. Please try again.")}
+      {:error, changeset} ->
+        {:noreply,
+         socket
+         |> assign(:projects, bookable_projects(nil))
+         |> put_flash(:error, booking_error(changeset, "Could not clock in. Please try again."))}
     end
   end
 
@@ -95,16 +99,30 @@ defmodule PotionZeitgeistWeb.DashboardLive do
             {:noreply,
              socket
              |> assign(:active_entry, Repo.preload(updated, :project, force: true))
+             |> assign(:projects, bookable_projects(updated))
              |> put_flash(:info, "Project updated.")}
 
-          {:error, _} ->
-            {:noreply, put_flash(socket, :error, "Could not change the project.")}
+          {:error, changeset} ->
+            # Re-render the select so it shows the project the entry is still booked to.
+            {:noreply,
+             socket
+             |> assign(:projects, bookable_projects(entry))
+             |> update(:project_select_rev, &(&1 + 1))
+             |> put_flash(:error, booking_error(changeset, "Could not change the project."))}
         end
     end
   end
 
   defp bookable_projects(nil), do: Projects.list_active_projects()
   defp bookable_projects(entry), do: Projects.list_bookable_projects(entry.project_id)
+
+  defp booking_error(%Ecto.Changeset{errors: errors}, fallback) do
+    if Keyword.has_key?(errors, :project_id),
+      do: "This project is no longer available. Please pick another one.",
+      else: fallback
+  end
+
+  defp booking_error(_error, fallback), do: fallback
 
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(value), do: value
@@ -144,12 +162,17 @@ defmodule PotionZeitgeistWeb.DashboardLive do
               {TimeTracking.format_duration(current_session_seconds(@active_entry, @now))}
             </div>
             <%= if @projects != [] do %>
-              <form id="active-project-form" phx-change="change_project" class="w-full max-w-xs mb-4">
-                <label class="label justify-center" for="active-project">
+              <form
+                id="active-project-form"
+                phx-change="change_project"
+                phx-auto-recover="ignore"
+                class="w-full max-w-xs mb-4"
+              >
+                <label class="label justify-center" for={"active-project-#{@project_select_rev}"}>
                   <span class="label-text text-base-content/60">Booked to project</span>
                 </label>
                 <.project_select
-                  id="active-project"
+                  id={"active-project-#{@project_select_rev}"}
                   name="project_id"
                   projects={@projects}
                   selected={@active_entry.project_id}

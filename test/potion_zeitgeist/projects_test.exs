@@ -11,6 +11,12 @@ defmodule PotionZeitgeist.ProjectsTest do
     assert %{name: ["already exists"]} = errors_on(changeset)
   end
 
+  test "blank names are rejected when updating a project" do
+    project = project_fixture()
+    assert {:error, changeset} = Projects.update_project(project, %{"name" => "  "})
+    assert %{name: ["can't be blank"]} = errors_on(changeset)
+  end
+
   test "users can clock in with or without an active project" do
     user = user_fixture()
     project = project_fixture()

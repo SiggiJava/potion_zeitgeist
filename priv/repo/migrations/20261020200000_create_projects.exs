@@ -13,7 +13,8 @@ defmodule PotionZeitgeist.Repo.Migrations.CreateProjects do
     create unique_index(:projects, [:name])
 
     alter table(:time_entries) do
-      add :project_id, references(:projects, on_delete: :nilify_all)
+      # :restrict so booked working time can never silently lose its project.
+      add :project_id, references(:projects, on_delete: :restrict)
     end
 
     create index(:time_entries, [:project_id])
