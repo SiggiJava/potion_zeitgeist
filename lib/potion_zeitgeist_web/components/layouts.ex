@@ -83,6 +83,12 @@ defmodule PotionZeitgeistWeb.Layouts do
                     Users
                   </.link>
                 </li>
+                <li>
+                  <.link navigate="/admin/projects" class="gap-3 font-medium">
+                    <.icon name="hero-briefcase" class="size-4" />
+                    Projects
+                  </.link>
+                </li>
               <% end %>
             </ul>
           </nav>

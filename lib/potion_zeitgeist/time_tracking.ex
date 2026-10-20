@@ -1,15 +1,16 @@
 defmodule PotionZeitgeist.TimeTracking do
   import Ecto.Query
 
-  alias PotionZeitgeist.Repo
-  alias PotionZeitgeist.TimeTracking.TimeEntry
+  alias PotionZeitgeist.{Projects, Repo}
+  alias PotionZeitgeist.TimeTracking.{Export, TimeEntry}
 
   def get_active_entry(user_id) do
     Repo.one(
       from e in TimeEntry,
         where: e.user_id == ^user_id and is_nil(e.clock_out),
         order_by: [desc: e.clock_in],
-        limit: 1
+        limit: 1,
+        preload: [:project]
     )
   end
 
@@ -17,7 +18,25 @@ defmodule PotionZeitgeist.TimeTracking do
     Repo.all(
       from e in TimeEntry,
         where: e.user_id == ^user_id,
-        order_by: [desc: e.clock_in]
+        order_by: [desc: e.clock_in],
+        preload: [:project]
+    )
+  end
+
+  @doc """
+  Lists entries of one user, or of all users when `user_id` is `:all`,
+  with user and project preloaded for the export.
+  """
+  def list_entries_for_export(:all) do
+    Repo.all(from e in TimeEntry, order_by: [asc: e.clock_in], preload: [:user, :project])
+  end
+
+  def list_entries_for_export(user_id) do
+    Repo.all(
+      from e in TimeEntry,
+        where: e.user_id == ^user_id,
+        order_by: [asc: e.clock_in],
+        preload: [:user, :project]
     )
   end
 
@@ -35,25 +54,37 @@ defmodule PotionZeitgeist.TimeTracking do
     )
   end
 
-  def get_entry!(id), do: Repo.get!(TimeEntry, id)
+  def get_entry!(id), do: TimeEntry |> Repo.get!(id) |> Repo.preload(:project)
 
   def get_entry!(id, user_id) do
-    Repo.get_by!(TimeEntry, id: id, user_id: user_id)
+    TimeEntry |> Repo.get_by!(id: id, user_id: user_id) |> Repo.preload(:project)
   end
 
-  def clock_in(user_id) do
+  def clock_in(user_id, project_id \\ nil) do
     case get_active_entry(user_id) do
       nil ->
         %TimeEntry{}
         |> TimeEntry.changeset(%{
           user_id: user_id,
+          project_id: project_id,
           clock_in: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
         })
+        |> validate_bookable_project()
         |> Repo.insert()
 
       _existing ->
         {:error, :already_clocked_in}
     end
+  end
+
+  @doc """
+  Books a running or finished entry to another project (or to none with `nil`).
+  """
+  def set_entry_project(%TimeEntry{} = entry, project_id) do
+    entry
+    |> TimeEntry.edit_changeset(%{project_id: project_id})
+    |> validate_bookable_project()
+    |> Repo.update()
   end
 
   def clock_out(%TimeEntry{} = entry) do
@@ -67,7 +98,24 @@ defmodule PotionZeitgeist.TimeTracking do
   def update_entry(%TimeEntry{} = entry, attrs) do
     entry
     |> TimeEntry.edit_changeset(attrs)
+    |> validate_bookable_project()
     |> Repo.update()
+  end
+
+  # New bookings may only go to active projects. Keeping the project an entry
+  # already has is allowed even after that project was archived.
+  defp validate_bookable_project(changeset) do
+    case Ecto.Changeset.get_change(changeset, :project_id) do
+      nil ->
+        changeset
+
+      project_id ->
+        if Projects.get_active_project(project_id) do
+          changeset
+        else
+          Ecto.Changeset.add_error(changeset, :project_id, "is not an active project")
+        end
+    end
   end
 
   def delete_entry(%TimeEntry{} = entry) do
@@ -90,49 +138,19 @@ defmodule PotionZeitgeist.TimeTracking do
     end)
   end
 
-  def format_duration(total_seconds) do
-    hours = div(total_seconds, 3600)
-    minutes = div(rem(total_seconds, 3600), 60)
-    seconds = rem(total_seconds, 60)
-    :io_lib.format("~2..0B:~2..0B:~2..0B", [hours, minutes, seconds]) |> to_string()
+  defdelegate format_duration(total_seconds), to: Export
+
+  @doc """
+  Daily totals per user and day, split by project when projects exist.
+  """
+  def generate_daily_csv(entries) do
+    Export.daily_csv(entries, Projects.list_projects())
   end
 
-  def generate_csv(entries) do
-    header = "Date,Clock In,Clock Out,Duration,Notes\n"
-
-    rows =
-      Enum.map(entries, fn entry ->
-        date = NaiveDateTime.to_date(entry.clock_in) |> Date.to_string()
-        clock_in = format_naive_dt(entry.clock_in)
-        clock_out = if entry.clock_out, do: format_naive_dt(entry.clock_out), else: ""
-
-        duration =
-          if entry.clock_out do
-            diff = NaiveDateTime.diff(entry.clock_out, entry.clock_in, :second)
-            format_duration(diff)
-          else
-            "In progress"
-          end
-
-        notes = csv_escape(entry.notes || "")
-
-        "#{date},#{clock_in},#{clock_out},#{duration},#{notes}\n"
-      end)
-
-    header <> Enum.join(rows)
-  end
-
-  defp format_naive_dt(dt) do
-    Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")
-  end
-
-  defp csv_escape(value) do
-    str = to_string(value)
-
-    if String.contains?(str, [",", "\"", "\n"]) do
-      "\"#{String.replace(str, "\"", "\"\"")}\""
-    else
-      str
-    end
+  @doc """
+  One row per clock-in/clock-out pair.
+  """
+  def generate_entries_csv(entries) do
+    Export.entries_csv(entries)
   end
 end

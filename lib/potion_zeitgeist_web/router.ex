@@ -76,6 +76,7 @@ defmodule PotionZeitgeistWeb.Router do
       on_mount: [{PotionZeitgeistWeb.UserAuth, :ensure_admin}] do
       live "/users", Admin.UsersLive
       live "/users/:id/entries", Admin.UserEntriesLive
+      live "/projects", Admin.ProjectsLive
     end
   end
 
@@ -84,6 +85,7 @@ defmodule PotionZeitgeistWeb.Router do
     pipe_through [:browser, :require_setup, :require_admin]
 
     get "/users/:id/entries", ExportController, :user_entries
+    get "/all", ExportController, :all_entries
   end
 
   # Dev tools

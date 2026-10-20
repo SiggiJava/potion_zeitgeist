@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.{Accounts, TimeTracking}
+  alias PotionZeitgeist.{Accounts, Projects, TimeTracking}
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
 
@@ -17,6 +17,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
      |> assign(:entries, entries)
      |> assign(:editing_entry, nil)
      |> assign(:edit_changeset, nil)
+     |> assign(:edit_projects, [])
      |> assign(:confirm_delete_id, nil)}
   end
 
@@ -28,7 +29,8 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
     {:noreply,
      socket
      |> assign(:editing_entry, entry)
-     |> assign(:edit_changeset, changeset)}
+     |> assign(:edit_changeset, changeset)
+     |> assign(:edit_projects, Projects.list_bookable_projects(entry.project_id))}
   end
 
   @impl true
@@ -134,13 +136,26 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
           <h1 class="text-2xl font-bold">{@viewed_user.name}'s Entries</h1>
           <p class="text-sm text-base-content/60">{@viewed_user.email}</p>
         </div>
-        <a
-          href={~p"/export/users/#{@viewed_user.id}/entries"}
-          class="btn btn-outline btn-sm gap-2"
-        >
-          <.icon name="hero-arrow-down-tray" class="size-4" />
-          Export CSV
-        </a>
+        <div class="flex gap-2 flex-wrap">
+          <a
+            id="export-daily"
+            href={~p"/export/users/#{@viewed_user.id}/entries"}
+            class="btn btn-outline btn-sm gap-2"
+            title="One total per day, split by project"
+          >
+            <.icon name="hero-arrow-down-tray" class="size-4" />
+            Export daily totals
+          </a>
+          <a
+            id="export-entries"
+            href={~p"/export/users/#{@viewed_user.id}/entries?type=entries"}
+            class="btn btn-ghost btn-sm gap-2"
+            title="Every clock-in/clock-out pair"
+          >
+            <.icon name="hero-table-cells" class="size-4" />
+            Export entries
+          </a>
+        </div>
       </div>
 
       <%= if @entries == [] do %>
@@ -159,6 +174,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
                 <th>Clock In</th>
                 <th>Clock Out</th>
                 <th>Duration</th>
+                <th>Project</th>
                 <th>Notes</th>
                 <th class="text-right">Actions</th>
               </tr>
@@ -180,6 +196,13 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
                     <% end %>
                   </td>
                   <td class="font-mono text-sm">{duration_string(entry)}</td>
+                  <td class="text-sm">
+                    <%= if entry.project do %>
+                      <span class="badge badge-ghost badge-sm">{entry.project.name}</span>
+                    <% else %>
+                      <span class="text-base-content/40">-</span>
+                    <% end %>
+                  </td>
                   <td class="text-sm text-base-content/70 max-w-xs truncate">
                     {entry.notes || ""}
                   </td>
@@ -254,6 +277,25 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
                   </label>
                 <% end %>
               </div>
+              <%= if @edit_projects != [] do %>
+                <div class="form-control mb-4">
+                  <label class="label" for="edit-entry-project">
+                    <span class="label-text font-medium">Project</span>
+                  </label>
+                  <.project_select
+                    id="edit-entry-project"
+                    name={f[:project_id].name}
+                    projects={@edit_projects}
+                    selected={@editing_entry.project_id}
+                  />
+                  <%= if error = List.first(f[:project_id].errors) do %>
+                    <label class="label">
+                      <span class="label-text-alt text-error">{translate_error(error)}</span>
+                    </label>
+                  <% end %>
+                </div>
+              <% end %>
+
               <div class="form-control mb-6">
                 <label class="label">
                   <span class="label-text font-medium">Notes</span>

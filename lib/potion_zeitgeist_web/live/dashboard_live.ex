@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.DashboardLive do
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.TimeTracking
+  alias PotionZeitgeist.{Projects, Repo, TimeTracking}
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_authenticated}
 
@@ -21,6 +21,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
      |> assign(:page_title, "Dashboard")
      |> assign(:active_entry, active_entry)
      |> assign(:today_seconds, today_seconds)
+     |> assign(:projects, bookable_projects(active_entry))
      |> assign(:now, NaiveDateTime.utc_now())}
   end
 
@@ -32,18 +33,22 @@ defmodule PotionZeitgeistWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:today_seconds, today_seconds)
+     |> assign(:projects, bookable_projects(active_entry))
      |> assign(:now, NaiveDateTime.utc_now())}
   end
 
   @impl true
-  def handle_event("clock_in", _params, socket) do
+  def handle_event("clock_in", params, socket) do
     user = socket.assigns.current_user
 
-    case TimeTracking.clock_in(user.id) do
+    case TimeTracking.clock_in(user.id, blank_to_nil(params["project_id"])) do
       {:ok, entry} ->
+        entry = Repo.preload(entry, :project)
+
         {:noreply,
          socket
          |> assign(:active_entry, entry)
+         |> assign(:projects, bookable_projects(entry))
          |> put_flash(:info, "Clocked in successfully.")}
 
       {:error, :already_clocked_in} ->
@@ -70,6 +75,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
              socket
              |> assign(:active_entry, nil)
              |> assign(:today_seconds, today_seconds)
+             |> assign(:projects, bookable_projects(nil))
              |> put_flash(:info, "Clocked out successfully.")}
 
           {:error, _} ->
@@ -77,6 +83,32 @@ defmodule PotionZeitgeistWeb.DashboardLive do
         end
     end
   end
+
+  @impl true
+  def handle_event("change_project", %{"project_id" => project_id}, socket) do
+    case socket.assigns.active_entry do
+      nil ->
+        {:noreply, put_flash(socket, :error, "You are not clocked in.")}
+
+      entry ->
+        case TimeTracking.set_entry_project(entry, blank_to_nil(project_id)) do
+          {:ok, updated} ->
+            {:noreply,
+             socket
+             |> assign(:active_entry, Repo.preload(updated, :project, force: true))
+             |> put_flash(:info, "Project updated.")}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Could not change the project.")}
+        end
+    end
+  end
+
+  defp bookable_projects(nil), do: Projects.list_active_projects()
+  defp bookable_projects(entry), do: Projects.list_bookable_projects(entry.project_id)
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   defp current_session_seconds(nil, _now), do: 0
 
@@ -112,6 +144,20 @@ defmodule PotionZeitgeistWeb.DashboardLive do
             <div class="text-4xl font-mono font-bold text-success my-4">
               {TimeTracking.format_duration(current_session_seconds(@active_entry, @now))}
             </div>
+            <%= if @projects != [] do %>
+              <form id="active-project-form" phx-change="change_project" class="w-full max-w-xs mb-4">
+                <label class="label justify-center" for="active-project">
+                  <span class="label-text text-base-content/60">Booked to project</span>
+                </label>
+                <.project_select
+                  id="active-project"
+                  name="project_id"
+                  projects={@projects}
+                  selected={@active_entry.project_id}
+                  class="select select-bordered select-sm w-full"
+                />
+              </form>
+            <% end %>
             <button phx-click="clock_out" class="btn btn-error btn-lg gap-2">
               <.icon name="hero-stop-circle" class="size-6" />
               Clock Out
@@ -120,10 +166,25 @@ defmodule PotionZeitgeistWeb.DashboardLive do
             <p class="text-base-content/60 text-sm mb-4">
               Press the button to start tracking your time
             </p>
-            <button phx-click="clock_in" class="btn btn-success btn-lg gap-2">
-              <.icon name="hero-play-circle" class="size-6" />
-              Clock In
-            </button>
+            <form id="clock-in-form" phx-submit="clock_in" class="flex flex-col items-center gap-4">
+              <%= if @projects != [] do %>
+                <div class="w-full max-w-xs">
+                  <label class="label justify-center" for="clock-in-project">
+                    <span class="label-text text-base-content/60">Project (optional)</span>
+                  </label>
+                  <.project_select
+                    id="clock-in-project"
+                    name="project_id"
+                    projects={@projects}
+                    class="select select-bordered select-sm w-full"
+                  />
+                </div>
+              <% end %>
+              <button type="submit" class="btn btn-success btn-lg gap-2">
+                <.icon name="hero-play-circle" class="size-6" />
+                Clock In
+              </button>
+            </form>
           <% end %>
         </div>
       </div>
