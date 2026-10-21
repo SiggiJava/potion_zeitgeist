@@ -101,6 +101,7 @@ defmodule PotionZeitgeistWeb.TimeEntriesLive do
       {:error, :invoiced} ->
         {:noreply,
          socket
+         |> assign(:entries, TimeTracking.list_entries(user.id))
          |> assign(:confirm_delete_id, nil)
          |> put_flash(:error, @invoiced_message)}
 

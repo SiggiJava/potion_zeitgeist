@@ -68,7 +68,7 @@ defmodule PotionZeitgeist.Repo.Migrations.CreateInvoicing do
       add :invoice_id, references(:invoices, on_delete: :delete_all), null: false
       add :position, :integer, null: false
       add :project_id, references(:projects, on_delete: :nilify_all)
-      add :description, :string, null: false
+      add :description, :text, null: false
       add :minutes, :integer, null: false
       add :hours, :decimal, precision: 10, scale: 2, null: false
       add :hourly_rate, :decimal, precision: 10, scale: 2, null: false
@@ -89,7 +89,7 @@ defmodule PotionZeitgeist.Repo.Migrations.CreateInvoicing do
       add :active, :boolean, null: false, default: true
       add :date, :date, null: false
       add :minutes, :integer, null: false
-      add :description, :string, null: false
+      add :description, :text, null: false
       add :encrypted_user_name, :binary
       add :encrypted_notes, :binary
 

@@ -56,9 +56,7 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
       :recipient,
       :template_id,
       :rate_mode,
-      :hourly_rate,
       :tax_mode,
-      :vat_rate,
       :show_timesheet
     ])
     |> validate_required([
@@ -72,12 +70,12 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
     ])
     |> validate_inclusion(:rate_mode, @rate_modes)
     |> validate_inclusion(:tax_mode, @tax_modes)
-    |> update_change(:hourly_rate, &Decimal.round(&1, 2, :half_up))
-    |> validate_hourly_rate()
-    |> validate_tax()
+    |> cast_hourly_rate(attrs)
+    |> cast_vat_rate(attrs)
     |> validate_recipient()
     |> validate_dates()
-    |> assoc_constraint(:template)
+    |> foreign_key_constraint(:template_id, message: "was deleted, pick another one")
+    |> check_constraint(:vat_rate, name: :invoices_tax_valid, message: "is not valid")
   end
 
   @doc "The fields of the issue form: invoice number and invoice date."
@@ -127,33 +125,44 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
 
   def tax_modes, do: @tax_modes
 
-  defp validate_hourly_rate(changeset) do
+  # The form keeps the values of rate fields it no longer shows, so only the
+  # rate of the chosen mode is read. Rates are stored with two decimals and
+  # validated as stored.
+  defp cast_hourly_rate(changeset, attrs) do
     if get_field(changeset, :rate_mode) == "single" do
       changeset
+      |> cast(attrs, [:hourly_rate])
+      |> update_change(:hourly_rate, &round_rate/1)
       |> validate_required([:hourly_rate], message: "is needed for one rate for all")
       |> validate_number(:hourly_rate, greater_than: 0, less_than: 100_000_000)
     else
-      changeset
+      put_change(changeset, :hourly_rate, nil)
     end
   end
 
   # Small businesses (§ 19 UStG) charge no VAT. With VAT the rate must be set.
-  defp validate_tax(changeset) do
-    case get_field(changeset, :tax_mode) do
-      "standard" ->
-        # A blank rate casts to the field default 0, so check the value itself.
-        rate = get_field(changeset, :vat_rate)
+  defp cast_vat_rate(changeset, attrs) do
+    if get_field(changeset, :tax_mode) == "standard" do
+      changeset =
+        changeset
+        |> cast(attrs, [:vat_rate])
+        |> update_change(:vat_rate, &round_rate/1)
 
-        if rate && Decimal.gt?(rate, 0) do
-          validate_number(changeset, :vat_rate, less_than: 100)
-        else
-          add_error(changeset, :vat_rate, "is needed when charging VAT")
-        end
+      # A blank rate casts to the field default 0, so check the value itself.
+      rate = get_field(changeset, :vat_rate)
 
-      _ ->
-        put_change(changeset, :vat_rate, Decimal.new(0))
+      cond do
+        Keyword.has_key?(changeset.errors, :vat_rate) -> changeset
+        rate && Decimal.gt?(rate, 0) -> validate_number(changeset, :vat_rate, less_than: 100)
+        true -> add_error(changeset, :vat_rate, "is needed when charging VAT")
+      end
+    else
+      put_change(changeset, :vat_rate, Decimal.new(0))
     end
   end
+
+  defp round_rate(nil), do: nil
+  defp round_rate(rate), do: Decimal.round(rate, 2, :half_up)
 
   # German invoices need the recipient's full name and address.
   defp validate_recipient(changeset) do

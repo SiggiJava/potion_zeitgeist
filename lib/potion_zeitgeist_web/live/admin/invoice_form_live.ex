@@ -94,8 +94,9 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   end
 
   @impl true
-  def handle_event("validate", %{"invoice" => incoming}, socket) do
-    {:noreply, socket |> apply_params(incoming) |> assign(:errors, []) |> refresh()}
+  def handle_event("validate", %{"invoice" => incoming} = event, socket) do
+    {:noreply,
+     socket |> apply_params(incoming, event["_target"]) |> assign(:errors, []) |> refresh()}
   end
 
   @impl true
@@ -129,7 +130,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
   @impl true
   def handle_event("save", %{"invoice" => incoming}, socket) do
-    socket = apply_params(socket, incoming)
+    socket = apply_params(socket, incoming, nil)
     params = Map.put(socket.assigns.params, "entry_ids", MapSet.to_list(socket.assigns.selected))
 
     result =
@@ -146,7 +147,18 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
          |> push_navigate(to: ~p"/admin/invoices/#{invoice}")}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, socket |> assign(:errors, changeset.errors) |> refresh()}
+        # A template deleted in the meantime must not be offered again.
+        {:noreply,
+         socket
+         |> assign(:errors, changeset.errors)
+         |> assign(:templates, Invoicing.list_templates())
+         |> refresh()}
+
+      {:error, :not_found} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This draft was deleted in the meantime.")
+         |> push_navigate(to: ~p"/admin/invoices")}
 
       {:error, :not_draft} ->
         {:noreply,
@@ -161,43 +173,69 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
   # Takes over the submitted form values. Rate and description fields only
   # exist for the projects of the shown month, so values typed for other
-  # months are kept. A new month reloads its entries; a new base invoice
+  # months are kept. A new month reloads its entries; picking a base invoice
   # copies its recipient, rates and so on.
-  defp apply_params(socket, incoming) do
+  #
+  # `target` is the field that changed. After a reconnect LiveView resends the
+  # whole form with the first field as target, so the base invoice is only
+  # applied when the user picked it, and never over values typed since.
+  defp apply_params(socket, incoming, target) do
     old = socket.assigns.params
+    incoming = drop_unused(incoming)
 
     params =
       old
       |> Map.merge(Map.drop(incoming, ["rates", "descriptions", "entry_ids"]))
-      |> Map.put("rates", Map.merge(old["rates"] || %{}, incoming["rates"] || %{}))
+      |> Map.put("rates", Map.merge(old["rates"] || %{}, drop_unused(incoming["rates"])))
       |> Map.put(
         "descriptions",
-        Map.merge(old["descriptions"] || %{}, incoming["descriptions"] || %{})
+        Map.merge(old["descriptions"] || %{}, drop_unused(incoming["descriptions"]))
       )
 
     month = Invoicing.parse_month(params["month"]) || socket.assigns.month
     base_id = params["base_id"]
+    selected = incoming |> Map.get("entry_ids", []) |> List.wrap()
 
     cond do
       month != socket.assigns.month ->
         socket
         |> assign(:params, Map.put(params, "month", Invoicing.month_param(month)))
         |> load_month(month)
-        |> select([])
+        |> select(selected)
 
-      base_id not in [nil, ""] and base_id != old["base_id"] ->
-        base = Invoicing.get_invoice!(base_id)
-
-        socket
-        |> assign(:params, Invoicing.apply_base(params, base))
-        |> select_base_projects(base)
+      target == ["invoice", "base_id"] and base_id not in [nil, ""] and
+          base_id != old["base_id"] ->
+        apply_base(socket, params, Invoicing.get_invoice(base_id))
 
       true ->
         socket
         |> assign(:params, params)
-        |> select(incoming |> Map.get("entry_ids", []) |> List.wrap())
+        |> select(selected)
     end
   end
+
+  # A base invoice deleted in another tab is dropped from the select.
+  defp apply_base(socket, params, nil) do
+    socket
+    |> assign(:params, Map.put(params, "base_id", ""))
+    |> assign(:base_invoices, Invoicing.base_invoices())
+    |> put_flash(:error, "That invoice was deleted in the meantime.")
+  end
+
+  defp apply_base(socket, params, base) do
+    socket
+    |> assign(:params, Invoicing.apply_base(params, base))
+    |> select_base_projects(base)
+  end
+
+  # On change, LiveView marks fields the user has not touched yet with
+  # "_unused_<name>" keys. Kept in the params, they would hide the errors of
+  # those fields after a save.
+  defp drop_unused(params) when is_map(params) do
+    Map.reject(params, fn {key, _value} -> String.starts_with?(key, "_unused_") end)
+  end
+
+  defp drop_unused(_params), do: %{}
 
   defp load_month(socket, month) do
     entries = Invoicing.billable_entries(month, socket.assigns.invoice)
@@ -208,7 +246,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     |> assign(:groups, Calculation.group_entries(entries))
     |> assign(:show_users, entries |> Enum.map(& &1.user_id) |> Enum.uniq() |> length() > 1)
     |> assign(:running_count, Invoicing.running_entry_count(month))
-    |> assign(:month_options, month_options(socket.assigns.today, socket.assigns.invoice))
+    |> assign(:month_options, month_options(socket.assigns.today, socket.assigns.invoice, month))
   end
 
   # Only ids of entries shown for the month count.
@@ -257,9 +295,9 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     |> assign(:form, to_form(params, as: :invoice, errors: errors))
   end
 
-  defp month_options(today, invoice) do
+  defp month_options(today, invoice, month) do
     today
-    |> Invoicing.month_choices(invoice)
+    |> Invoicing.month_choices(invoice, month)
     |> Enum.map(fn {month, minutes} ->
       label = Calendar.strftime(month, "%B %Y")
 

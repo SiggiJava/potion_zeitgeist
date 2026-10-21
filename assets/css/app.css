@@ -105,8 +105,10 @@
 /* This file is for your main application CSS */
 
 /* Invoices: A4 sheets that look like paper on screen in both themes and
-   print one sheet per page. The time sheet gets page margins of its own, so
-   long time sheets continue on the next page with a margin. */
+   print one sheet per page. In print the top and bottom margins come from
+   the page, so a letter or time sheet longer than one page continues on the
+   next page with the same margins. The named page keeps these margins off
+   the other pages of the app. */
 .invoice-sheet {
   position: relative;
   display: flex;
@@ -114,7 +116,7 @@
   box-sizing: border-box;
   width: 210mm;
   min-height: 297mm;
-  margin: 0 auto;
+  margin-inline: auto;
   padding: 15mm 20mm 12mm 25mm;
   background: #fff;
   color: #171717;
@@ -125,12 +127,7 @@
 }
 
 @media print {
-  @page {
-    size: A4;
-    margin: 0;
-  }
-
-  @page timesheet {
+  @page invoice {
     size: A4;
     margin: 15mm 0 12mm;
   }
@@ -140,8 +137,12 @@
   }
 
   .invoice-sheet {
-    min-height: 296mm;
+    page: invoice;
+    /* The page area is 270mm; a little less, so rounding never adds a page. */
+    min-height: 269mm;
     margin: 0;
+    padding-top: 0;
+    padding-bottom: 0;
     box-shadow: none;
   }
 
@@ -151,10 +152,17 @@
   }
 
   .invoice-sheet-break {
-    page: timesheet;
     break-before: page;
     min-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
+  }
+
+  /* Fixed elements repeat on every printed page, so each page of a draft or
+     cancelled invoice shows the watermark once. */
+  .invoice-watermark {
+    position: fixed;
+  }
+
+  .invoice-sheet-break .invoice-watermark {
+    display: none;
   }
 }

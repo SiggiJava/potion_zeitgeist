@@ -19,6 +19,11 @@ defmodule PotionZeitgeist.Invoicing do
   @payment_days 14
   @default_vat_rate "19"
 
+  # Rates below this fit the numeric(10,2) rate columns, and totals below the
+  # second limit fit the numeric(12,2) amount columns.
+  @max_rate Decimal.new(100_000_000)
+  @max_amount Decimal.new(10_000_000_000)
+
   # Texts of the sample template that must not end up on a real invoice.
   @sample_markers ["Mustermann", "Musterstraße", "DE00 0000", "000/000/00000", "example.com"]
 
@@ -102,6 +107,14 @@ defmodule PotionZeitgeist.Invoicing do
 
   def get_invoice!(id) do
     Invoice |> Repo.get!(id) |> Repo.preload([:items, :template])
+  end
+
+  @doc "Like `get_invoice!/1`, but `nil` when the invoice does not exist (any more)."
+  def get_invoice(id) do
+    case Repo.get(Invoice, id) do
+      nil -> nil
+      invoice -> Repo.preload(invoice, [:items, :template])
+    end
   end
 
   @doc "The time sheet rows of an invoice, as stored when it was saved."
@@ -191,9 +204,9 @@ defmodule PotionZeitgeist.Invoicing do
   @doc """
   Months to pick for an invoice, newest first, as `{month, unbilled_minutes}`:
   every month with time that is not invoiced yet, plus the current and the
-  previous month and the month of the draft being edited.
+  previous month, the month of the draft being edited and the `shown` month.
   """
-  def month_choices(today, invoice \\ nil) do
+  def month_choices(today, invoice \\ nil, shown \\ nil) do
     unbilled =
       from(e in TimeEntry,
         as: :entry,
@@ -212,8 +225,9 @@ defmodule PotionZeitgeist.Invoicing do
     current = Date.beginning_of_month(today)
     previous = current |> Date.add(-1) |> Date.beginning_of_month()
     draft_month = invoice && invoice.period_start
+    shown = shown && Date.beginning_of_month(shown)
 
-    [current, previous, draft_month | Map.keys(unbilled)]
+    [current, previous, draft_month, shown | Map.keys(unbilled)]
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
     |> Enum.sort({:desc, Date})
@@ -451,7 +465,7 @@ defmodule PotionZeitgeist.Invoicing do
 
       rate ->
         rate = Decimal.round(rate, 2, :half_up)
-        if Decimal.gt?(rate, 0), do: rate, else: nil
+        if Decimal.gt?(rate, 0) and Decimal.lt?(rate, @max_rate), do: rate, else: nil
     end
   end
 
@@ -503,6 +517,7 @@ defmodule PotionZeitgeist.Invoicing do
         |> put_totals(items)
         |> validate_entries(entries, entry_ids)
         |> validate_rates(items)
+        |> validate_total()
 
       if changeset.valid? do
         write_draft(changeset, items, entries)
@@ -516,11 +531,19 @@ defmodule PotionZeitgeist.Invoicing do
     end
   end
 
+  # Rates may be typed with a German comma. Anything else that is not a plain
+  # number (such as "85 €" or "1e9") is left for the changeset to reject.
   defp normalize_params(params) do
     Enum.reduce(["hourly_rate", "vat_rate"], params, fn key, params ->
       case params do
         %{^key => value} when is_binary(value) ->
-          Map.put(params, key, value |> String.trim() |> String.replace(",", "."))
+          value =
+            case parse_decimal(value) do
+              %Decimal{} = number -> Decimal.to_string(number, :normal)
+              nil -> if String.trim(value) == "", do: "", else: "invalid"
+            end
+
+          Map.put(params, key, value)
 
         _ ->
           params
@@ -560,10 +583,18 @@ defmodule PotionZeitgeist.Invoicing do
       Ecto.Changeset.add_error(
         changeset,
         :rates,
-        "enter an hourly rate above 0 for every project"
+        "enter an hourly rate above 0 and below 100,000,000 for every project"
       )
     else
       changeset
+    end
+  end
+
+  defp validate_total(changeset) do
+    if Decimal.lt?(Ecto.Changeset.get_field(changeset, :gross_total), @max_amount) do
+      changeset
+    else
+      Ecto.Changeset.add_error(changeset, :rates, "the total is too large for one invoice")
     end
   end
 
@@ -635,18 +666,23 @@ defmodule PotionZeitgeist.Invoicing do
 
   # Re-reads an invoice under a row lock and rolls back unless it still has
   # the expected status, so a stale page can never change an issued invoice.
+  # A draft deleted in the meantime rolls back with `:not_found`.
   defp lock_invoice!(id, status) do
     case Repo.one(from i in Invoice, where: i.id == ^id, lock: "FOR UPDATE") do
       %Invoice{status: ^status} = invoice -> invoice
+      nil -> Repo.rollback(:not_found)
       _ -> Repo.rollback(if status == "draft", do: :not_draft, else: :not_issued)
     end
   end
 
-  @doc "Deletes a draft, which frees its time entries."
+  @doc """
+  Deletes a draft, which frees its time entries. Fails with `:not_draft` once
+  it is issued and with `:not_found` when it was deleted already.
+  """
   def delete_draft(%Invoice{id: id}) do
     case Repo.delete_all(from i in Invoice, where: i.id == ^id and i.status == "draft") do
       {1, _} -> :ok
-      _ -> {:error, :not_draft}
+      _ -> {:error, if(Repo.get(Invoice, id), do: :not_draft, else: :not_found)}
     end
   end
 
@@ -772,9 +808,9 @@ defmodule PotionZeitgeist.Invoicing do
       [_, prefix, counter] ->
         case year_in_prefix(prefix) do
           {start, prefix_year} when prefix_year < year ->
-            String.slice(prefix, 0, start) <>
+            binary_part(prefix, 0, start) <>
               Integer.to_string(year) <>
-              String.slice(prefix, (start + 4)..-1//1) <>
+              binary_part(prefix, start + 4, byte_size(prefix) - start - 4) <>
               String.pad_leading("1", String.length(counter), "0")
 
           _ ->
@@ -786,10 +822,10 @@ defmodule PotionZeitgeist.Invoicing do
     end
   end
 
-  # Position and value of the last four-digit year (19xx or 20xx) in a prefix.
+  # Byte offset and value of the last four-digit year (19xx or 20xx) in a prefix.
   defp year_in_prefix(prefix) do
     case Regex.scan(~r/(?<!\d)(?:19|20)\d{2}(?!\d)/, prefix, return: :index) |> List.last() do
-      [{start, 4}] -> {start, prefix |> String.slice(start, 4) |> String.to_integer()}
+      [{start, 4}] -> {start, prefix |> binary_part(start, 4) |> String.to_integer()}
       _ -> nil
     end
   end
@@ -840,14 +876,18 @@ defmodule PotionZeitgeist.Invoicing do
 
   defp parse_date(_value), do: nil
 
-  @doc "Parses a rate or percentage typed with a dot or a German comma."
+  @doc """
+  Parses a rate or percentage typed as a plain number with a dot or a German
+  comma. Exponents, infinity and NaN are not numbers here.
+  """
   def parse_decimal(%Decimal{} = value), do: value
 
   def parse_decimal(value) when is_binary(value) do
-    case value |> String.trim() |> String.replace(",", ".") |> Decimal.parse() do
-      {decimal, ""} -> decimal
-      _ -> nil
-    end
+    value = value |> String.trim() |> String.replace(",", ".")
+
+    if Regex.match?(~r/^[+-]?(\d+(\.\d*)?|\.\d+)$/, value),
+      do: Decimal.new(value),
+      else: nil
   end
 
   def parse_decimal(_value), do: nil

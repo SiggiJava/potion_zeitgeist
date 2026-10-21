@@ -41,6 +41,9 @@ defmodule PotionZeitgeist.InvoicingTest do
 
       assert [{~D[2026-11-01], 0}, {~D[2026-10-01], 390}, {~D[2026-07-01], 30}] =
                Invoicing.month_choices(~D[2026-11-05])
+
+      # The month the form shows is always one of the choices.
+      assert {~D[2026-04-01], 0} in Invoicing.month_choices(~D[2026-11-05], nil, ~D[2026-04-01])
     end
   end
 
@@ -76,7 +79,9 @@ defmodule PotionZeitgeist.InvoicingTest do
 
       missing = put_in(params, ["rates", to_string(ctx.app.id)], "")
       assert {:error, changeset} = Invoicing.create_draft(missing)
-      assert %{rates: ["enter an hourly rate above 0 for every project"]} = errors_on(changeset)
+
+      assert %{rates: ["enter an hourly rate above 0 and below 100,000,000 for every project"]} =
+               errors_on(changeset)
 
       assert {:ok, draft} = Invoicing.create_draft(params)
       assert [%{description: "App"} = app, %{description: "Website-Relaunch"} = web] = draft.items
@@ -97,6 +102,126 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert Decimal.equal?(draft.net_total, Decimal.new("520.00"))
       assert Decimal.equal?(draft.vat_total, Decimal.new("98.80"))
       assert Decimal.equal?(draft.gross_total, Decimal.new("618.80"))
+    end
+
+    test "read only the rate fields of the chosen modes", ctx do
+      # The form keeps what was typed into fields it no longer shows.
+      draft =
+        draft_fixture(ctx.template, ctx.entries, %{
+          "rate_mode" => "per_project",
+          "hourly_rate" => "85 €",
+          "rates" => %{to_string(ctx.website.id) => "100", to_string(ctx.app.id) => "50"},
+          "tax_mode" => "small_business",
+          "vat_rate" => "19 %"
+        })
+
+      assert draft.hourly_rate == nil
+      assert Decimal.equal?(draft.vat_rate, 0)
+
+      # A single rate cleared later is a missing rate, not a crash.
+      :ok = Invoicing.delete_draft(draft)
+      single = draft_fixture(ctx.template, ctx.entries)
+
+      assert {:error, changeset} =
+               Invoicing.update_draft(
+                 single,
+                 draft_params(ctx.template, ctx.entries, %{"hourly_rate" => ""})
+               )
+
+      assert %{hourly_rate: ["is needed for one rate for all"]} = errors_on(changeset)
+    end
+
+    test "store the VAT rate with two decimals and compute with that rate", ctx do
+      draft =
+        draft_fixture(ctx.template, ctx.entries, %{
+          "tax_mode" => "standard",
+          "vat_rate" => "7,125"
+        })
+
+      assert Decimal.equal?(draft.vat_rate, Decimal.new("7.13"))
+      # 520.00 net at 7.13 %
+      assert Decimal.equal?(draft.vat_total, Decimal.new("37.08"))
+
+      for {rate, message} <- [
+            {"99,999", "must be less than 100"},
+            {"0,001", "is needed when charging VAT"},
+            {"19 %", "is invalid"},
+            {"inf", "is invalid"},
+            {"1e2", "is invalid"}
+          ] do
+        params =
+          draft_params(ctx.template, ctx.entries, %{"tax_mode" => "standard", "vat_rate" => rate})
+
+        assert {:error, changeset} = Invoicing.create_draft(params)
+        assert %{vat_rate: [^message]} = errors_on(changeset)
+      end
+    end
+
+    test "reject rates and totals too large to store", ctx do
+      rates = %{to_string(ctx.website.id) => "100000000", to_string(ctx.app.id) => "50"}
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{
+                   "rate_mode" => "per_project",
+                   "rates" => rates
+                 })
+               )
+
+      assert %{rates: [_]} = errors_on(changeset)
+
+      for rate <- ["100000000", "inf", "NaN", "1e400000000"] do
+        assert {:error, changeset} =
+                 Invoicing.create_draft(
+                   draft_params(ctx.template, ctx.entries, %{"hourly_rate" => rate})
+                 )
+
+        assert %{hourly_rate: [_]} = errors_on(changeset)
+      end
+
+      # 200 hours at almost 100 million an hour is more than an amount column holds.
+      long = entry_fixture(ctx.user, "2026-10-03 00:00:00", "2026-10-11 08:00:00")
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, [long], %{"hourly_rate" => "99999999"})
+               )
+
+      assert %{rates: ["the total is too large for one invoice"]} = errors_on(changeset)
+    end
+
+    test "take long item texts", ctx do
+      text = String.duplicate("Entwicklung und Betreuung ", 20)
+
+      draft =
+        draft_fixture(ctx.template, ctx.entries, %{
+          "descriptions" => %{to_string(ctx.website.id) => text}
+        })
+
+      assert Enum.any?(draft.items, &(&1.description == String.trim(text)))
+    end
+
+    test "report a template deleted in the meantime on the template field", ctx do
+      {:ok, _} = Invoicing.delete_template(ctx.template)
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(draft_params(ctx.template, ctx.entries))
+
+      assert %{template_id: ["was deleted, pick another one"]} = errors_on(changeset)
+    end
+
+    test "deleted elsewhere cannot be saved, issued or deleted again", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries)
+      assert :ok = Invoicing.delete_draft(draft)
+
+      assert Invoicing.get_invoice(draft.id) == nil
+      assert {:error, :not_found} = Invoicing.delete_draft(draft)
+
+      assert {:error, :not_found} =
+               Invoicing.update_draft(draft, draft_params(ctx.template, ctx.entries))
+
+      assert {:error, :not_found} =
+               Invoicing.issue_invoice(draft, %{"number" => "1", "invoice_date" => "2026-11-02"})
     end
 
     test "need entries, a rate and a full recipient address", ctx do
@@ -148,6 +273,20 @@ defmodule PotionZeitgeist.InvoicingTest do
                |> TimeTracking.list_entries()
                |> Enum.sort_by(& &1.clock_in, NaiveDateTime)
                |> Enum.map(& &1.invoiced)
+    end
+
+    test "a stale clock-out or project switch cannot change an invoiced entry", ctx do
+      # Running in one tab, finished on the entries page and invoiced since.
+      stale = entry_fixture(ctx.user, "2026-10-05 08:00:00", nil)
+
+      {:ok, finished} =
+        TimeTracking.update_entry(stale, %{"clock_out" => ~N[2026-10-05 12:00:00]})
+
+      draft_fixture(ctx.template, [finished])
+
+      assert {:error, :not_clocked_in} = TimeTracking.clock_out(stale)
+      assert {:error, :not_clocked_in} = TimeTracking.switch_project(stale, ctx.app.id)
+      assert Repo.reload(finished).clock_out == ~N[2026-10-05 12:00:00]
     end
   end
 
@@ -285,6 +424,12 @@ defmodule PotionZeitgeist.InvoicingTest do
   end
 
   describe "invoice numbers" do
+    test "keep prefixes with umlauts and other non-ASCII characters" do
+      assert Invoicing.next_number("KÜ-2026-007", 2026) == "KÜ-2026-008"
+      assert Invoicing.next_number("KÜ-2026-007", 2027) == "KÜ-2027-001"
+      assert Invoicing.next_number("№2025-01", 2026) == "№2026-01"
+    end
+
     test "follow the last number and start over in a new year" do
       assert Invoicing.next_number(nil, 2026) == "2026-001"
       assert Invoicing.next_number("2026-007", 2026) == "2026-008"
@@ -326,6 +471,20 @@ defmodule PotionZeitgeist.InvoicingTest do
         })
 
       {:ok, base} = Invoicing.create_draft(params)
+
+      # A newer invoice for another client bills the same project differently.
+      later = entry_fixture(ctx.user, "2026-11-03 08:00:00", "2026-11-03 10:00:00", ctx.website)
+
+      draft_fixture(ctx.template, [later], %{
+        "month" => "2026-11",
+        "recipient" => "Andere AG\nAllee 1\n20095 Hamburg",
+        "rate_mode" => "per_project",
+        "rates" => %{to_string(ctx.website.id) => "120"},
+        "descriptions" => %{to_string(ctx.website.id) => "Wartung"}
+      })
+
+      assert Invoicing.new_invoice_params(~D[2026-12-03])["rates"][to_string(ctx.website.id)] ==
+               "120"
 
       new = Invoicing.new_invoice_params(~D[2026-12-03], base)
       assert new["month"] == "2026-11"

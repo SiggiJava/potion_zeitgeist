@@ -29,7 +29,7 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
           <div class="w-[85mm] min-w-0 min-h-[40mm]">
             <div
               :if={@letter.sender_line != ""}
-              class="mb-[3mm] truncate border-b border-neutral-400 pb-0.5 text-[7pt] text-neutral-600"
+              class="mb-[3mm] border-b border-neutral-400 pb-0.5 text-[7pt] text-neutral-600"
             >
               {@letter.sender_line}
             </div>
@@ -65,7 +65,10 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
             </tr>
           </thead>
           <tbody>
-            <tr :for={item <- @letter.items} class="border-b border-neutral-300 align-top">
+            <tr
+              :for={item <- @letter.items}
+              class="border-b border-neutral-300 align-top break-inside-avoid"
+            >
               <td class="py-1.5 pr-2">{item.position}</td>
               <td class="py-1.5 pr-2">{item.description}</td>
               <td class="py-1.5 pr-2 text-right tabular-nums">{item.hours}</td>
@@ -73,7 +76,7 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
               <td class="py-1.5 text-right tabular-nums whitespace-nowrap">{item.amount}</td>
             </tr>
           </tbody>
-          <tfoot>
+          <tfoot class="break-inside-avoid">
             <%= for {{label, value}, index} <- Enum.with_index(@letter.totals) do %>
               <tr class={
                 if index == length(@letter.totals) - 1,
@@ -95,7 +98,7 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
           phx-no-format
         >{@letter.after_items}</div>
 
-        <footer class="mt-auto pt-[10mm] text-center text-[7.5pt] leading-snug text-neutral-600">
+        <footer class="mt-auto break-inside-avoid pt-[10mm] text-center text-[7.5pt] leading-snug text-neutral-600">
           <div class="border-t border-neutral-300 pt-[3mm]">
             <div :if={@letter.tax_id != ""}>{@letter.tax_id}</div>
             <div :if={@letter.footer != ""} class="whitespace-pre-line" phx-no-format>{@letter.footer}</div>
@@ -163,7 +166,7 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
     ~H"""
     <div
       aria-hidden="true"
-      class="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden"
+      class="invoice-watermark pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden"
     >
       <span class="-rotate-30 select-none text-[64pt] font-black tracking-widest text-neutral-900/[0.06]">
         {@text}

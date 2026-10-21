@@ -71,7 +71,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
         {:noreply, assign_issue_form(socket, changeset)}
 
       {:error, _} ->
-        {:noreply, reload(socket, "This invoice was already issued.")}
+        {:noreply, reload(socket, "This invoice was issued in the meantime.")}
     end
   end
 
@@ -137,12 +137,21 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
     end
   end
 
+  # The invoice was changed in another tab. A deleted draft leaves the page.
   defp reload(socket, message) do
-    socket
-    |> assign_invoice(Invoicing.get_invoice!(socket.assigns.invoice.id))
-    |> assign(:issue_form, nil)
-    |> assign(:confirm, nil)
-    |> put_flash(:error, message)
+    case Invoicing.get_invoice(socket.assigns.invoice.id) do
+      nil ->
+        socket
+        |> put_flash(:error, "This draft was deleted in the meantime.")
+        |> push_navigate(to: ~p"/admin/invoices")
+
+      invoice ->
+        socket
+        |> assign_invoice(invoice)
+        |> assign(:issue_form, nil)
+        |> assign(:confirm, nil)
+        |> put_flash(:error, message)
+    end
   end
 
   @impl true

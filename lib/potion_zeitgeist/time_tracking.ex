@@ -103,14 +103,6 @@ defmodule PotionZeitgeist.TimeTracking do
   Returns the new running entry.
   """
   def switch_project(%TimeEntry{} = entry, project_id) do
-    # Re-read the entry so a clock-out made elsewhere is never overwritten.
-    case get_active_entry(entry.user_id) do
-      %TimeEntry{id: id} = running when id == entry.id -> do_switch_project(running, project_id)
-      _ -> {:error, :not_clocked_in}
-    end
-  end
-
-  defp do_switch_project(entry, project_id) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     new_entry =
@@ -118,22 +110,45 @@ defmodule PotionZeitgeist.TimeTracking do
       |> TimeEntry.changeset(%{user_id: entry.user_id, project_id: project_id, clock_in: now})
       |> validate_bookable_project()
 
-    Ecto.Multi.new()
-    |> Ecto.Multi.update(:previous, TimeEntry.clock_out_changeset(entry, %{clock_out: now}))
-    |> Ecto.Multi.insert(:current, new_entry)
-    |> Repo.transaction()
-    |> case do
-      {:ok, %{current: current}} -> {:ok, current}
-      {:error, _step, changeset, _changes} -> {:error, changeset}
-    end
+    while_running(entry, fn running ->
+      with {:ok, _previous} <-
+             running |> TimeEntry.clock_out_changeset(%{clock_out: now}) |> Repo.update() do
+        Repo.insert(new_entry)
+      end
+    end)
   end
 
+  @doc """
+  Clocks the entry out now. Fails with `{:error, :not_clocked_in}` when it was
+  clocked out elsewhere in the meantime.
+  """
   def clock_out(%TimeEntry{} = entry) do
-    entry
-    |> TimeEntry.clock_out_changeset(%{
-      clock_out: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-    })
-    |> Repo.update()
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    while_running(entry, fn running ->
+      running |> TimeEntry.clock_out_changeset(%{clock_out: now}) |> Repo.update()
+    end)
+  end
+
+  # Re-reads the entry under a row lock and runs `change` only while it is
+  # still running, so a stale page can never overwrite a clock-out made
+  # elsewhere. A running entry is never on an invoice.
+  defp while_running(%TimeEntry{id: id}, change) do
+    Repo.transaction(fn ->
+      running =
+        Repo.one(
+          from e in TimeEntry, where: e.id == ^id and is_nil(e.clock_out), lock: "FOR UPDATE"
+        )
+
+      if running do
+        case change.(running) do
+          {:ok, result} -> result
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      else
+        Repo.rollback(:not_clocked_in)
+      end
+    end)
   end
 
   @doc """

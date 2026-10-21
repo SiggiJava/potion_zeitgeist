@@ -90,6 +90,19 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
            ]
   end
 
+  test "the return address keeps postcode and city" do
+    assert Letter.build(issued_invoice(%{})).sender_line ==
+             "Michael Beispiel · Hauptstraße 1 · 12345 Musterstadt"
+
+    sender = "Michael Beispiel\nSoftwareentwicklung\nHauptstraße 1\n12345 Musterstadt\nTel. 0123"
+
+    assert Letter.build(issued_invoice(%{letter_sender: sender})).sender_line ==
+             "Michael Beispiel · Hauptstraße 1 · 12345 Musterstadt"
+
+    assert Letter.build(issued_invoice(%{letter_sender: "Max\nPostfach 12\nWien"})).sender_line ==
+             "Max · Postfach 12 · Wien"
+  end
+
   test "drafts use the current template and say ENTWURF" do
     template = %InvoiceTemplate{
       sender: "A",

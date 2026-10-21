@@ -17,6 +17,9 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   @placeholder ~r/\{\{\s*([a-z_]+)\s*\}\}/
   @items_placeholder ~r/\{\{\s*positionen\s*\}\}/
 
+  # A postcode line such as "12345 Musterstadt", "D-12345 Musterstadt" or "A-1010 Wien".
+  @postcode_line ~r/^([A-Z]{1,2}-)?\d{4,5}\s/u
+
   @small_business_note "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung)."
 
   @placeholders [
@@ -211,11 +214,21 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   # The small return address above the recipient window.
   defp sender_line(sender) do
-    sender
-    |> String.split(["\r\n", "\n"], trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.take(3)
+    lines =
+      sender
+      |> String.split(["\r\n", "\n"], trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    # Name, street and postcode with city, also when a company or trade line
+    # sits between name and street.
+    case Enum.find_index(lines, &Regex.match?(@postcode_line, &1)) do
+      index when is_integer(index) and index > 0 ->
+        [hd(lines) | lines |> Enum.slice(1..index//1) |> Enum.take(-2)]
+
+      _ ->
+        Enum.take(lines, 3)
+    end
     |> Enum.join(" · ")
   end
 

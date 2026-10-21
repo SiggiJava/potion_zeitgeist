@@ -28,6 +28,25 @@ defmodule PotionZeitgeistWeb.DashboardLiveTest do
     view |> form("#active-project-form", %{project_id: project.id}) |> render_change()
   end
 
+  test "clocking out on a stale page keeps a clock-out made elsewhere", %{
+    conn: conn,
+    running: running
+  } do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    # Finished on the entries page in another tab, maybe invoiced since.
+    finished_at =
+      NaiveDateTime.utc_now() |> NaiveDateTime.add(-1800) |> NaiveDateTime.truncate(:second)
+
+    {:ok, _} = TimeTracking.update_entry(running, %{"clock_out" => finished_at})
+
+    assert view |> element("button[phx-click=clock_out]") |> render_click() =~
+             "You were already clocked out."
+
+    assert PotionZeitgeist.Repo.reload(running).clock_out == finished_at
+    refute has_element?(view, "button[phx-click=clock_out]")
+  end
+
   test "picking another project asks whether to rebook or switch", %{conn: conn, beta: beta} do
     {:ok, view, _html} = live(conn, ~p"/")
     refute has_element?(view, "#project-change-modal")
