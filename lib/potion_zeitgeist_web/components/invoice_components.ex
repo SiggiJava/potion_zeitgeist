@@ -25,8 +25,8 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
           >{@letter.sender}</div>
         </div>
 
-        <div class="mt-[8mm] flex items-start justify-between gap-[10mm]">
-          <div class="w-[85mm] min-h-[40mm]">
+        <div class="mt-[8mm] flex items-start justify-between gap-[8mm]">
+          <div class="w-[85mm] min-w-0 min-h-[40mm]">
             <div
               :if={@letter.sender_line != ""}
               class="mb-[3mm] truncate border-b border-neutral-400 pb-0.5 text-[7pt] text-neutral-600"
@@ -36,10 +36,10 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
             <div class="whitespace-pre-line leading-snug" phx-no-format>{@letter.recipient}</div>
           </div>
 
-          <dl class="grid grid-cols-[auto_auto] gap-x-4 gap-y-0.5 text-[9pt]">
+          <dl class="grid shrink-0 grid-cols-[auto_auto] gap-x-4 gap-y-0.5 text-[9pt]">
             <%= for {label, value} <- @letter.info do %>
               <dt class="text-neutral-600">{label}</dt>
-              <dd class="text-right font-medium">{value}</dd>
+              <dd class="whitespace-nowrap text-right font-medium">{value}</dd>
             <% end %>
           </dl>
         </div>

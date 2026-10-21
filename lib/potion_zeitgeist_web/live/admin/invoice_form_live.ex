@@ -412,10 +412,10 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                           else: "Select project"}
                       </button>
                     </div>
-                    <table class="table table-sm">
+                    <table class="table table-sm table-fixed w-full">
                       <tbody>
                         <tr :for={entry <- group.entries} id={"entry-row-#{entry.id}"}>
-                          <td class="w-8">
+                          <td class="w-10">
                             <input
                               type="checkbox"
                               id={"entry-#{entry.id}"}
@@ -425,16 +425,18 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                               class="checkbox checkbox-sm"
                             />
                           </td>
-                          <td class="whitespace-nowrap">
+                          <td class="w-28 whitespace-nowrap">
                             <label for={"entry-#{entry.id}"}>
                               {entry.clock_in |> NaiveDateTime.to_date() |> Date.to_string()}
                             </label>
                           </td>
-                          <td :if={@show_users} class="text-sm">{entry.user && entry.user.name}</td>
-                          <td class="font-mono text-sm whitespace-nowrap">
+                          <td :if={@show_users} class="w-32 truncate text-sm">
+                            {entry.user && entry.user.name}
+                          </td>
+                          <td class="w-20 font-mono text-sm whitespace-nowrap">
                             {entry |> Calculation.entry_minutes() |> Format.duration()} h
                           </td>
-                          <td class="text-sm text-base-content/70 max-w-xs truncate">
+                          <td class="text-sm text-base-content/70 truncate" title={entry.notes}>
                             {entry.notes || ""}
                           </td>
                         </tr>
@@ -599,8 +601,11 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                   field={@form[:show_timesheet]}
                   id="show-timesheet"
                   type="checkbox"
-                  label="Attach a time sheet (one row per day and item, with notes)"
+                  label="Attach a time sheet"
                 />
+                <p class="text-xs text-base-content/60 -mt-1">
+                  A second page with one row per day and item, including the notes.
+                </p>
               </div>
             </section>
           </div>

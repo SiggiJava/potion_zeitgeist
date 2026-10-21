@@ -135,10 +135,19 @@
     margin: 15mm 0 12mm;
   }
 
+  html {
+    background: #fff;
+  }
+
   .invoice-sheet {
     min-height: 296mm;
     margin: 0;
     box-shadow: none;
+  }
+
+  /* A repeated table footer pushes the totals onto an extra page in Chromium. */
+  .invoice-sheet tfoot {
+    display: table-row-group;
   }
 
   .invoice-sheet-break {
