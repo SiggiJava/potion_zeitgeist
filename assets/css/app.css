@@ -136,11 +136,20 @@
     background: #fff;
   }
 
+  /* Any printed letter, also from the invoice page. */
+  .invoice-sheet {
+    min-height: 0;
+    box-shadow: none;
+  }
+
+  .invoice-sheet-break {
+    break-before: page;
+  }
+
   .invoice-print .invoice-sheet {
     page: invoice;
     min-height: 296mm;
     margin: 0;
-    box-shadow: none;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
   }
@@ -151,7 +160,6 @@
   }
 
   .invoice-print .invoice-sheet-break {
-    break-before: page;
     min-height: 0;
   }
 

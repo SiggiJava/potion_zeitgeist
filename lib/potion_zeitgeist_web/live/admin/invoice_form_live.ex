@@ -436,7 +436,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                   <div
                     :for={group <- @groups}
                     id={"group-#{group.key}"}
-                    class="rounded-box border border-base-300"
+                    class="@container rounded-box border border-base-300"
                   >
                     <div class="flex items-center justify-between gap-3 px-3 py-2 bg-base-200 rounded-t-box">
                       <div class="min-w-0">
@@ -476,18 +476,21 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                               {entry.clock_in |> NaiveDateTime.to_date() |> Date.to_string()}
                             </label>
                           </td>
-                          <td :if={@show_users} class="hidden sm:table-cell w-32 truncate text-sm">
+                          <td :if={@show_users} class="hidden @md:table-cell w-32 truncate text-sm">
                             {entry.user && entry.user.name}
                           </td>
                           <td class="w-20 font-mono text-sm whitespace-nowrap">
                             {entry |> Calculation.entry_minutes() |> Format.duration()} h
                           </td>
-                          <td class="text-sm text-base-content/70 truncate" title={entry.notes}>
-                            <%!-- On phones the user column is hidden, so the name leads the notes. --%>
-                            <span :if={@show_users} class="sm:hidden font-medium text-base-content">
-                              {entry.user && entry.user.name} ·
+                          <td class="text-sm text-base-content/70" title={entry.notes}>
+                            <%!-- In a narrow box the user column is hidden; the name goes above the notes. --%>
+                            <span
+                              :if={@show_users}
+                              class="@md:hidden block truncate font-medium text-base-content"
+                            >
+                              {entry.user && entry.user.name}
                             </span>
-                            {entry.notes || ""}
+                            <span class="block truncate">{entry.notes || ""}</span>
                           </td>
                         </tr>
                       </tbody>
