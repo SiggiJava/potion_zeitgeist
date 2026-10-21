@@ -142,6 +142,17 @@ defmodule PotionZeitgeist.InvoicingTest do
       # 520.00 net at 7.13 %
       assert Decimal.equal?(draft.vat_total, Decimal.new("37.08"))
 
+      # The live summary shows the same rate and amounts.
+      preview =
+        Invoicing.preview(Invoicing.billable_entries(~D[2026-10-01], draft), %{
+          "tax_mode" => "standard",
+          "vat_rate" => "7,125",
+          "hourly_rate" => "80"
+        })
+
+      assert Decimal.equal?(preview.vat_rate, draft.vat_rate)
+      assert Decimal.equal?(preview.totals.gross, draft.gross_total)
+
       for {rate, message} <- [
             {"99,999", "must be less than 100"},
             {"0,001", "is needed when charging VAT"},
@@ -170,7 +181,7 @@ defmodule PotionZeitgeist.InvoicingTest do
 
       assert %{rates: [_]} = errors_on(changeset)
 
-      for rate <- ["100000000", "inf", "NaN", "1e400000000"] do
+      for rate <- ["100000000", "inf", "NaN", "1e400000000", String.duplicate("9", 35)] do
         assert {:error, changeset} =
                  Invoicing.create_draft(
                    draft_params(ctx.template, ctx.entries, %{"hourly_rate" => rate})

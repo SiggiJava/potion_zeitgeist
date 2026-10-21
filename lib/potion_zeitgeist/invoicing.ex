@@ -426,9 +426,10 @@ defmodule PotionZeitgeist.Invoicing do
   def preview(entries, params) do
     tax_mode = if params["tax_mode"] == "standard", do: "standard", else: "small_business"
 
+    # Rounded as the saved draft stores it, so the summary shows the saved amounts.
     vat_rate =
       if tax_mode == "standard",
-        do: parse_decimal(params["vat_rate"]) || Decimal.new(0),
+        do: Calculation.round_rate(parse_decimal(params["vat_rate"]) || Decimal.new(0)),
         else: Decimal.new(0)
 
     items = build_items(entries, params)
@@ -464,7 +465,7 @@ defmodule PotionZeitgeist.Invoicing do
         nil
 
       rate ->
-        rate = Decimal.round(rate, 2, :half_up)
+        rate = Calculation.round_rate(rate)
         if Decimal.gt?(rate, 0) and Decimal.lt?(rate, @max_rate), do: rate, else: nil
     end
   end
@@ -878,16 +879,20 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Parses a rate or percentage typed as a plain number with a dot or a German
-  comma. Exponents, infinity and NaN are not numbers here.
+  comma. Exponents, infinity, NaN and numbers beyond Decimal's precision are
+  not numbers here.
   """
   def parse_decimal(%Decimal{} = value), do: value
 
   def parse_decimal(value) when is_binary(value) do
     value = value |> String.trim() |> String.replace(",", ".")
 
-    if Regex.match?(~r/^[+-]?(\d+(\.\d*)?|\.\d+)$/, value),
-      do: Decimal.new(value),
-      else: nil
+    with true <- Regex.match?(~r/^[+-]?(\d+(\.\d*)?|\.\d+)$/, value),
+         {%Decimal{} = decimal, ""} <- Decimal.parse(value) do
+      decimal
+    else
+      _ -> nil
+    end
   end
 
   def parse_decimal(_value), do: nil

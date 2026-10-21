@@ -240,6 +240,15 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
              edit |> form("#invoice-form") |> render_submit()
   end
 
+  test "a link to start from a deleted invoice opens an empty form", ctx do
+    invoice = draft_fixture(template_fixture(), ctx.entries)
+    :ok = Invoicing.delete_draft(invoice)
+
+    {:ok, _view, html} = live(ctx.conn, ~p"/admin/invoices/new?#{[from: invoice.id]}")
+
+    assert html =~ "That invoice was deleted in the meantime."
+  end
+
   test "a base invoice deleted in another tab is dropped from the select", ctx do
     template = template_fixture()
     [first, second] = ctx.entries

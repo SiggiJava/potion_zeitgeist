@@ -158,7 +158,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
   def render(assigns) do
     ~H"""
     <div class="space-y-6">
-      <div class="flex items-start justify-between flex-wrap gap-3">
+      <div class="flex items-start justify-between flex-wrap gap-3 print:hidden">
         <div>
           <.link navigate={~p"/admin/invoices"} class="text-sm text-base-content/60 hover:underline">
             ← Invoices
@@ -245,7 +245,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
       <div
         :if={@invoice.status == "draft" && is_nil(@invoice.template)}
         role="alert"
-        class="alert alert-warning"
+        class="alert alert-warning print:hidden"
       >
         <.icon name="hero-exclamation-triangle" class="size-5" />
         <span>
@@ -253,16 +253,16 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
         </span>
       </div>
 
-      <p :if={@invoice.status == "draft"} class="text-sm text-base-content/60">
+      <p :if={@invoice.status == "draft"} class="text-sm text-base-content/60 print:hidden">
         This is a draft. It has no number yet and can still be changed. Issuing it assigns the
         invoice number and freezes the letter.
       </p>
 
-      <p :if={@invoice.status == "issued"} class="text-sm text-base-content/60">
+      <p :if={@invoice.status == "issued"} class="text-sm text-base-content/60 print:hidden">
         Issued invoices can no longer be changed. Keep the PDF you send to the client for 8 years.
       </p>
 
-      <div :if={@invoice.status == "cancelled"} role="alert" class="alert">
+      <div :if={@invoice.status == "cancelled"} role="alert" class="alert print:hidden">
         <.icon name="hero-information-circle" class="size-5" />
         <span>
           This invoice was cancelled on {Calendar.strftime(@invoice.cancelled_at, "%Y-%m-%d")}.
@@ -270,7 +270,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
         </span>
       </div>
 
-      <div class="overflow-x-auto rounded-box bg-base-300 p-4 sm:p-8">
+      <div class="overflow-x-auto rounded-box bg-base-300 p-4 sm:p-8 print:overflow-visible print:bg-transparent print:p-0">
         <.letter letter={@letter} />
       </div>
 

@@ -2,6 +2,8 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias PotionZeitgeist.Invoicing.Calculation
+
   @statuses ~w(draft issued cancelled)
   @rate_modes ~w(single per_project)
   @tax_modes ~w(small_business standard)
@@ -132,7 +134,7 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
     if get_field(changeset, :rate_mode) == "single" do
       changeset
       |> cast(attrs, [:hourly_rate])
-      |> update_change(:hourly_rate, &round_rate/1)
+      |> update_change(:hourly_rate, &Calculation.round_rate/1)
       |> validate_required([:hourly_rate], message: "is needed for one rate for all")
       |> validate_number(:hourly_rate, greater_than: 0, less_than: 100_000_000)
     else
@@ -146,7 +148,7 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
       changeset =
         changeset
         |> cast(attrs, [:vat_rate])
-        |> update_change(:vat_rate, &round_rate/1)
+        |> update_change(:vat_rate, &Calculation.round_rate/1)
 
       # A blank rate casts to the field default 0, so check the value itself.
       rate = get_field(changeset, :vat_rate)
@@ -160,9 +162,6 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
       put_change(changeset, :vat_rate, Decimal.new(0))
     end
   end
-
-  defp round_rate(nil), do: nil
-  defp round_rate(rate), do: Decimal.round(rate, 2, :half_up)
 
   # German invoices need the recipient's full name and address.
   defp validate_recipient(changeset) do

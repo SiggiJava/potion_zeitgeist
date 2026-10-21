@@ -103,6 +103,10 @@ defmodule PotionZeitgeist.Invoicing.Calculation do
     hours |> Decimal.mult(rate) |> Decimal.round(2, :half_up)
   end
 
+  @doc "Hourly and VAT rates are stored with two decimals."
+  def round_rate(nil), do: nil
+  def round_rate(rate), do: Decimal.round(rate, 2, :half_up)
+
   @doc "Duration of a completed entry in minutes, rounded half up."
   def entry_minutes(%{clock_out: nil}), do: 0
 

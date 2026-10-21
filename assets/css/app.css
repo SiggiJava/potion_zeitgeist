@@ -104,11 +104,11 @@
 
 /* This file is for your main application CSS */
 
-/* Invoices: A4 sheets that look like paper on screen in both themes and
-   print one sheet per page. In print the top and bottom margins come from
-   the page, so a letter or time sheet longer than one page continues on the
-   next page with the same margins. The named page keeps these margins off
-   the other pages of the app. */
+/* Invoices: A4 sheets that look like paper on screen in both themes. On the
+   print page (body.invoice-print) each sheet starts a page of its own. The
+   pages have no margins, so browsers print no header or footer lines on the
+   invoice; the sheet's padding is repeated on every page instead, so a letter
+   or time sheet longer than one page continues with the same margins. */
 .invoice-sheet {
   position: relative;
   display: flex;
@@ -129,40 +129,39 @@
 @media print {
   @page invoice {
     size: A4;
-    margin: 15mm 0 12mm;
+    margin: 0;
   }
 
   html {
     background: #fff;
   }
 
-  .invoice-sheet {
+  .invoice-print .invoice-sheet {
     page: invoice;
-    /* The page area is 270mm; a little less, so rounding never adds a page. */
-    min-height: 269mm;
+    min-height: 296mm;
     margin: 0;
-    padding-top: 0;
-    padding-bottom: 0;
     box-shadow: none;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   /* A repeated table footer pushes the totals onto an extra page in Chromium. */
-  .invoice-sheet tfoot {
+  .invoice-print .invoice-sheet tfoot {
     display: table-row-group;
   }
 
-  .invoice-sheet-break {
+  .invoice-print .invoice-sheet-break {
     break-before: page;
     min-height: 0;
   }
 
   /* Fixed elements repeat on every printed page, so each page of a draft or
      cancelled invoice shows the watermark once. */
-  .invoice-watermark {
+  .invoice-print .invoice-watermark {
     position: fixed;
   }
 
-  .invoice-sheet-break .invoice-watermark {
+  .invoice-print .invoice-sheet-break .invoice-watermark {
     display: none;
   }
 }

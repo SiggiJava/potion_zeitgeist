@@ -98,6 +98,20 @@ defmodule PotionZeitgeist.TimeTracking do
   end
 
   @doc """
+  Books the whole running entry to another project (or to none with `nil`).
+  Fails with `{:error, :not_clocked_in}` when it was clocked out elsewhere in
+  the meantime.
+  """
+  def rebook_running(%TimeEntry{} = entry, project_id) do
+    while_running(entry, fn running ->
+      running
+      |> TimeEntry.edit_changeset(%{project_id: project_id})
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
+  end
+
+  @doc """
   Clocks the running entry out now and clocks in again on `project_id` (or on
   no project with `nil`), so the time worked so far stays on the old project.
   Returns the new running entry.

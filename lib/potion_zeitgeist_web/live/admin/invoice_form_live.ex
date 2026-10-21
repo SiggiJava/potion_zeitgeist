@@ -14,6 +14,8 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
 
+  @base_deleted "That invoice was deleted in the meantime."
+
   @impl true
   def mount(params, _session, socket) do
     today = Invoicing.today()
@@ -29,9 +31,13 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     today = socket.assigns.today
     base_invoices = Invoicing.base_invoices()
 
+    # A link from an invoice page names its invoice, which may have been
+    # deleted since; a reconnect mounts again with the same link.
+    from = base_id && Invoicing.get_invoice(base_id)
+
     base =
       cond do
-        base_id -> Invoicing.get_invoice!(base_id)
+        from -> from
         # With a single client, start from the last invoice right away.
         length(base_invoices) == 1 -> hd(base_invoices)
         true -> nil
@@ -68,6 +74,8 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
         :projects -> select_base_projects(socket, base)
         ids -> select(socket, Enum.map(ids, &to_string/1))
       end
+
+    socket = if base_id && !from, do: put_flash(socket, :error, @base_deleted), else: socket
 
     {:ok, refresh(socket)}
   end
@@ -219,7 +227,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     socket
     |> assign(:params, Map.put(params, "base_id", ""))
     |> assign(:base_invoices, Invoicing.base_invoices())
-    |> put_flash(:error, "That invoice was deleted in the meantime.")
+    |> put_flash(:error, @base_deleted)
   end
 
   defp apply_base(socket, params, base) do
@@ -463,18 +471,22 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                               class="checkbox checkbox-sm"
                             />
                           </td>
-                          <td class="w-28 whitespace-nowrap">
+                          <td class="w-24 whitespace-nowrap">
                             <label for={"entry-#{entry.id}"}>
                               {entry.clock_in |> NaiveDateTime.to_date() |> Date.to_string()}
                             </label>
                           </td>
-                          <td :if={@show_users} class="w-32 truncate text-sm">
+                          <td :if={@show_users} class="hidden sm:table-cell w-32 truncate text-sm">
                             {entry.user && entry.user.name}
                           </td>
                           <td class="w-20 font-mono text-sm whitespace-nowrap">
                             {entry |> Calculation.entry_minutes() |> Format.duration()} h
                           </td>
                           <td class="text-sm text-base-content/70 truncate" title={entry.notes}>
+                            <%!-- On phones the user column is hidden, so the name leads the notes. --%>
+                            <span :if={@show_users} class="sm:hidden font-medium text-base-content">
+                              {entry.user && entry.user.name} ·
+                            </span>
                             {entry.notes || ""}
                           </td>
                         </tr>

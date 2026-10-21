@@ -47,6 +47,30 @@ defmodule PotionZeitgeistWeb.DashboardLiveTest do
     refute has_element?(view, "button[phx-click=clock_out]")
   end
 
+  test "a stale page that missed a switch elsewhere neither rebooks nor clocks out the old session",
+       %{conn: conn, running: running, alpha: alpha, beta: beta} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    # In another tab the user switched projects: the old session ended and a
+    # new one runs.
+    {:ok, newer} = TimeTracking.switch_project(running, alpha.id)
+
+    pick_project(view, beta)
+    assert view |> element("#rebook-project") |> render_click() =~ "already clocked out elsewhere"
+
+    assert PotionZeitgeist.Repo.reload(running).project_id == alpha.id
+    assert PotionZeitgeist.Repo.reload(newer).project_id == alpha.id
+
+    # The page now shows the newer session; a stale clock-out says so.
+    {:ok, stale, _html} = live(conn, ~p"/")
+    {:ok, newest} = TimeTracking.switch_project(newer, beta.id)
+
+    assert stale |> element("button[phx-click=clock_out]") |> render_click() =~
+             "A newer session is running"
+
+    assert PotionZeitgeist.Repo.reload(newest).clock_out == nil
+  end
+
   test "picking another project asks whether to rebook or switch", %{conn: conn, beta: beta} do
     {:ok, view, _html} = live(conn, ~p"/")
     refute has_element?(view, "#project-change-modal")
