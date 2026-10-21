@@ -3,6 +3,8 @@ defmodule PotionZeitgeistWeb.TimeEntriesLive do
 
   alias PotionZeitgeist.{Projects, TimeTracking}
 
+  @invoiced_message "This entry is on an invoice and can no longer be changed. Ask an administrator if it needs a correction."
+
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_authenticated}
 
   @impl true
@@ -58,6 +60,14 @@ defmodule PotionZeitgeistWeb.TimeEntriesLive do
          |> assign(:edit_changeset, nil)
          |> put_flash(:info, "Entry updated.")}
 
+      {:error, :invoiced} ->
+        {:noreply,
+         socket
+         |> assign(:entries, TimeTracking.list_entries(socket.assigns.current_user.id))
+         |> assign(:editing_entry, nil)
+         |> assign(:edit_changeset, nil)
+         |> put_flash(:error, @invoiced_message)}
+
       {:error, changeset} ->
         {:noreply, assign(socket, :edit_changeset, changeset)}
     end
@@ -87,6 +97,13 @@ defmodule PotionZeitgeistWeb.TimeEntriesLive do
          |> assign(:entries, entries)
          |> assign(:confirm_delete_id, nil)
          |> put_flash(:info, "Entry deleted.")}
+
+      {:error, :invoiced} ->
+        {:noreply,
+         socket
+         |> assign(:entries, TimeTracking.list_entries(user.id))
+         |> assign(:confirm_delete_id, nil)
+         |> put_flash(:error, @invoiced_message)}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Could not delete entry.")}
@@ -205,33 +222,42 @@ defmodule PotionZeitgeistWeb.TimeEntriesLive do
                   </td>
                   <td class="text-right">
                     <div class="flex gap-2 justify-end">
-                      <%= if @confirm_delete_id == entry.id do %>
-                        <span class="text-sm text-error font-medium self-center">Delete?</span>
-                        <button
-                          phx-click="delete"
-                          phx-value-id={entry.id}
-                          class="btn btn-error btn-xs"
+                      <%= if entry.invoiced do %>
+                        <span
+                          class="badge badge-info badge-sm gap-1"
+                          title="On an invoice, so it can no longer be changed"
                         >
-                          Yes
-                        </button>
-                        <button phx-click="cancel_delete" class="btn btn-ghost btn-xs">
-                          No
-                        </button>
+                          <.icon name="hero-lock-closed" class="size-3" /> Invoiced
+                        </span>
                       <% else %>
-                        <button
-                          phx-click="edit"
-                          phx-value-id={entry.id}
-                          class="btn btn-ghost btn-xs gap-1"
-                        >
-                          <.icon name="hero-pencil" class="size-3" /> Edit
-                        </button>
-                        <button
-                          phx-click="confirm_delete"
-                          phx-value-id={entry.id}
-                          class="btn btn-ghost btn-xs text-error gap-1"
-                        >
-                          <.icon name="hero-trash" class="size-3" /> Delete
-                        </button>
+                        <%= if @confirm_delete_id == entry.id do %>
+                          <span class="text-sm text-error font-medium self-center">Delete?</span>
+                          <button
+                            phx-click="delete"
+                            phx-value-id={entry.id}
+                            class="btn btn-error btn-xs"
+                          >
+                            Yes
+                          </button>
+                          <button phx-click="cancel_delete" class="btn btn-ghost btn-xs">
+                            No
+                          </button>
+                        <% else %>
+                          <button
+                            phx-click="edit"
+                            phx-value-id={entry.id}
+                            class="btn btn-ghost btn-xs gap-1"
+                          >
+                            <.icon name="hero-pencil" class="size-3" /> Edit
+                          </button>
+                          <button
+                            phx-click="confirm_delete"
+                            phx-value-id={entry.id}
+                            class="btn btn-ghost btn-xs text-error gap-1"
+                          >
+                            <.icon name="hero-trash" class="size-3" /> Delete
+                          </button>
+                        <% end %>
                       <% end %>
                     </div>
                   </td>

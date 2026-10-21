@@ -1,7 +1,8 @@
 defmodule PotionZeitgeist.TimeTracking do
   import Ecto.Query
 
-  alias PotionZeitgeist.{Projects, Repo}
+  alias PotionZeitgeist.{Invoicing, Projects, Repo}
+  alias PotionZeitgeist.Invoicing.InvoiceEntry
   alias PotionZeitgeist.TimeTracking.{Export, TimeEntry}
 
   def get_active_entry(user_id) do
@@ -14,11 +15,18 @@ defmodule PotionZeitgeist.TimeTracking do
     )
   end
 
+  @doc """
+  Entries of a user, newest first, with `invoiced` set for entries on a draft
+  or issued invoice.
+  """
   def list_entries(user_id) do
     Repo.all(
       from e in TimeEntry,
+        left_join: ie in InvoiceEntry,
+        on: ie.time_entry_id == e.id and ie.active,
         where: e.user_id == ^user_id,
         order_by: [desc: e.clock_in],
+        select_merge: %{invoiced: not is_nil(ie.id)},
         preload: [:project]
     )
   end
@@ -81,10 +89,26 @@ defmodule PotionZeitgeist.TimeTracking do
   Books a running or finished entry to another project (or to none with `nil`).
   """
   def set_entry_project(%TimeEntry{} = entry, project_id) do
-    entry
-    |> TimeEntry.edit_changeset(%{project_id: project_id})
-    |> validate_bookable_project()
-    |> Repo.update()
+    unless_invoiced(entry, fn ->
+      entry
+      |> TimeEntry.edit_changeset(%{project_id: project_id})
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
+  end
+
+  @doc """
+  Books the whole running entry to another project (or to none with `nil`).
+  Fails with `{:error, :not_clocked_in}` when it was clocked out elsewhere in
+  the meantime.
+  """
+  def rebook_running(%TimeEntry{} = entry, project_id) do
+    while_running(entry, fn running ->
+      running
+      |> TimeEntry.edit_changeset(%{project_id: project_id})
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
   end
 
   @doc """
@@ -93,14 +117,6 @@ defmodule PotionZeitgeist.TimeTracking do
   Returns the new running entry.
   """
   def switch_project(%TimeEntry{} = entry, project_id) do
-    # Re-read the entry so a clock-out made elsewhere is never overwritten.
-    case get_active_entry(entry.user_id) do
-      %TimeEntry{id: id} = running when id == entry.id -> do_switch_project(running, project_id)
-      _ -> {:error, :not_clocked_in}
-    end
-  end
-
-  defp do_switch_project(entry, project_id) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     new_entry =
@@ -108,29 +124,58 @@ defmodule PotionZeitgeist.TimeTracking do
       |> TimeEntry.changeset(%{user_id: entry.user_id, project_id: project_id, clock_in: now})
       |> validate_bookable_project()
 
-    Ecto.Multi.new()
-    |> Ecto.Multi.update(:previous, TimeEntry.clock_out_changeset(entry, %{clock_out: now}))
-    |> Ecto.Multi.insert(:current, new_entry)
-    |> Repo.transaction()
-    |> case do
-      {:ok, %{current: current}} -> {:ok, current}
-      {:error, _step, changeset, _changes} -> {:error, changeset}
-    end
+    while_running(entry, fn running ->
+      with {:ok, _previous} <-
+             running |> TimeEntry.clock_out_changeset(%{clock_out: now}) |> Repo.update() do
+        Repo.insert(new_entry)
+      end
+    end)
   end
 
+  @doc """
+  Clocks the entry out now. Fails with `{:error, :not_clocked_in}` when it was
+  clocked out elsewhere in the meantime.
+  """
   def clock_out(%TimeEntry{} = entry) do
-    entry
-    |> TimeEntry.clock_out_changeset(%{
-      clock_out: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-    })
-    |> Repo.update()
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    while_running(entry, fn running ->
+      running |> TimeEntry.clock_out_changeset(%{clock_out: now}) |> Repo.update()
+    end)
   end
 
+  # Re-reads the entry under a row lock and runs `change` only while it is
+  # still running, so a stale page can never overwrite a clock-out made
+  # elsewhere. A running entry is never on an invoice.
+  defp while_running(%TimeEntry{id: id}, change) do
+    Repo.transaction(fn ->
+      running =
+        Repo.one(
+          from e in TimeEntry, where: e.id == ^id and is_nil(e.clock_out), lock: "FOR UPDATE"
+        )
+
+      if running do
+        case change.(running) do
+          {:ok, result} -> result
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      else
+        Repo.rollback(:not_clocked_in)
+      end
+    end)
+  end
+
+  @doc """
+  Updates an entry. Entries on a draft or issued invoice cannot be changed and
+  return `{:error, :invoiced}`.
+  """
   def update_entry(%TimeEntry{} = entry, attrs) do
-    entry
-    |> TimeEntry.edit_changeset(attrs)
-    |> validate_bookable_project()
-    |> Repo.update()
+    unless_invoiced(entry, fn ->
+      entry
+      |> TimeEntry.edit_changeset(attrs)
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
   end
 
   # New bookings may only go to active projects. Keeping the project an entry
@@ -149,8 +194,30 @@ defmodule PotionZeitgeist.TimeTracking do
     end
   end
 
+  @doc """
+  Deletes an entry, unless it is on a draft or issued invoice
+  (`{:error, :invoiced}`).
+  """
   def delete_entry(%TimeEntry{} = entry) do
-    Repo.delete(entry)
+    unless_invoiced(entry, fn -> Repo.delete(entry) end)
+  end
+
+  # Billed time must keep matching its invoice. Cancelling the invoice (or
+  # deleting the draft) unlocks the entry again. The row lock waits for an
+  # invoice that is being saved with this entry right now.
+  defp unless_invoiced(%TimeEntry{id: id}, change) do
+    Repo.transaction(fn ->
+      Repo.one(from e in TimeEntry, where: e.id == ^id, lock: "FOR UPDATE", select: e.id)
+
+      if Invoicing.entry_invoiced?(id) do
+        Repo.rollback(:invoiced)
+      else
+        case change.() do
+          {:ok, result} -> result
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end
+    end)
   end
 
   def change_entry(%TimeEntry{} = entry, attrs \\ %{}) do

@@ -5,6 +5,8 @@ defmodule PotionZeitgeistWeb.DashboardLive do
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_authenticated}
 
+  @ended_elsewhere "This session was already clocked out elsewhere."
+
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_user
@@ -82,6 +84,9 @@ defmodule PotionZeitgeistWeb.DashboardLive do
              |> assign(:projects, bookable_projects(nil))
              |> put_flash(:info, "Clocked out successfully.")}
 
+          {:error, :not_clocked_in} ->
+            {:noreply, reload_after_change_elsewhere(socket)}
+
           {:error, _} ->
             {:noreply, put_flash(socket, :error, "Could not clock out. Please try again.")}
         end
@@ -113,7 +118,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
   def handle_event("rebook_project", _params, socket) do
     %{active_entry: entry, project_change: change} = socket.assigns
 
-    case change && entry && TimeTracking.set_entry_project(entry, change.project_id) do
+    case change && entry && TimeTracking.rebook_running(entry, change.project_id) do
       {:ok, updated} ->
         updated = Repo.preload(updated, :project, force: true)
 
@@ -123,6 +128,9 @@ defmodule PotionZeitgeistWeb.DashboardLive do
          |> assign(:projects, bookable_projects(updated))
          |> assign(:project_change, nil)
          |> put_flash(:info, "The whole session is now booked to #{change.name}.")}
+
+      {:error, :not_clocked_in} ->
+        {:noreply, project_change_failed(socket, nil, @ended_elsewhere)}
 
       error ->
         {:noreply, project_change_failed(socket, error, "Could not rebook the session.")}
@@ -151,6 +159,9 @@ defmodule PotionZeitgeistWeb.DashboardLive do
            "Switched to #{change.name}. The time so far stays on #{project_label(entry)}."
          )}
 
+      {:error, :not_clocked_in} ->
+        {:noreply, project_change_failed(socket, nil, @ended_elsewhere)}
+
       error ->
         {:noreply, project_change_failed(socket, error, "Could not switch the project.")}
     end
@@ -169,6 +180,24 @@ defmodule PotionZeitgeistWeb.DashboardLive do
 
   defp ask_project_change(socket, _entry, project_id, name) do
     assign(socket, :project_change, %{project_id: project_id, name: name})
+  end
+
+  # The running entry was clocked out in another tab or on the entries page,
+  # maybe followed by a new clock-in there.
+  defp reload_after_change_elsewhere(socket) do
+    user = socket.assigns.current_user
+    active_entry = TimeTracking.get_active_entry(user.id)
+
+    message =
+      if active_entry,
+        do: "#{@ended_elsewhere} A newer session is running; clock out again to end it.",
+        else: "You were already clocked out."
+
+    socket
+    |> assign(:active_entry, active_entry)
+    |> assign(:today_seconds, TimeTracking.today_total_seconds(user.id))
+    |> assign(:projects, bookable_projects(active_entry))
+    |> put_flash(:error, message)
   end
 
   # Reloads the running entry, which may have been clocked out or changed

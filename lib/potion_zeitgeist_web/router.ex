@@ -77,7 +77,17 @@ defmodule PotionZeitgeistWeb.Router do
       live "/users", Admin.UsersLive
       live "/users/:id/entries", Admin.UserEntriesLive
       live "/projects", Admin.ProjectsLive
+      live "/invoices", Admin.InvoicesLive
+      live "/invoices/new", Admin.InvoiceFormLive, :new
+      live "/invoices/:id", Admin.InvoiceLive
+      live "/invoices/:id/edit", Admin.InvoiceFormLive, :edit
+      live "/invoice-templates", Admin.InvoiceTemplatesLive
+      live "/invoice-templates/new", Admin.InvoiceTemplateFormLive, :new
+      live "/invoice-templates/:id/edit", Admin.InvoiceTemplateFormLive, :edit
     end
+
+    # Standalone A4 page to print an invoice or save it as PDF
+    get "/invoices/:id/print", InvoiceController, :print
   end
 
   # Admin export routes

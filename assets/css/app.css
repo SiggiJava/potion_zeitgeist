@@ -103,3 +103,73 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* Invoices: A4 sheets that look like paper on screen in both themes. On the
+   print page (body.invoice-print) each sheet starts a page of its own. The
+   pages have no margins, so browsers print no header or footer lines on the
+   invoice; the sheet's padding is repeated on every page instead, so a letter
+   or time sheet longer than one page continues with the same margins. */
+.invoice-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  margin-inline: auto;
+  padding: 15mm 20mm 12mm 25mm;
+  background: #fff;
+  color: #171717;
+  color-scheme: light;
+  font-size: 10pt;
+  line-height: 1.45;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.08);
+}
+
+@media print {
+  @page invoice {
+    size: A4;
+    margin: 0;
+  }
+
+  html {
+    background: #fff;
+  }
+
+  /* Any printed letter, also from the invoice page. */
+  .invoice-sheet {
+    min-height: 0;
+    box-shadow: none;
+  }
+
+  .invoice-sheet-break {
+    break-before: page;
+  }
+
+  .invoice-print .invoice-sheet {
+    page: invoice;
+    min-height: 296mm;
+    margin: 0;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
+  /* A repeated table footer pushes the totals onto an extra page in Chromium. */
+  .invoice-print .invoice-sheet tfoot {
+    display: table-row-group;
+  }
+
+  .invoice-print .invoice-sheet-break {
+    min-height: 0;
+  }
+
+  /* Fixed elements repeat on every printed page, so each page of a draft or
+     cancelled invoice shows the watermark once. */
+  .invoice-print .invoice-watermark {
+    position: fixed;
+  }
+
+  .invoice-print .invoice-sheet-break .invoice-watermark {
+    display: none;
+  }
+}

@@ -6,6 +6,8 @@ defmodule PotionZeitgeist.TimeTracking.TimeEntry do
     field :clock_in, :naive_datetime
     field :clock_out, :naive_datetime
     field :notes, PotionZeitgeist.Encrypted.Binary, source: :encrypted_notes
+    # Set by `PotionZeitgeist.TimeTracking.list_entries/1`.
+    field :invoiced, :boolean, virtual: true, default: false
 
     belongs_to :user, PotionZeitgeist.Accounts.User
     belongs_to :project, PotionZeitgeist.Projects.Project

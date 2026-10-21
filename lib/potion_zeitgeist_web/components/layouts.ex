@@ -84,6 +84,16 @@ defmodule PotionZeitgeistWeb.Layouts do
                     <.icon name="hero-briefcase" class="size-4" /> Projects
                   </.link>
                 </li>
+                <li>
+                  <.link navigate={~p"/admin/invoices"} class="gap-3 font-medium">
+                    <.icon name="hero-document-currency-euro" class="size-4" /> Invoices
+                  </.link>
+                </li>
+                <li>
+                  <.link navigate={~p"/admin/invoice-templates"} class="gap-3 font-medium">
+                    <.icon name="hero-document-text" class="size-4" /> Letter templates
+                  </.link>
+                </li>
               <% end %>
             </ul>
           </nav>
