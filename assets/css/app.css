@@ -103,3 +103,49 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* Invoices: A4 sheets that look like paper on screen in both themes and
+   print one sheet per page. The time sheet gets page margins of its own, so
+   long time sheets continue on the next page with a margin. */
+.invoice-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 15mm 20mm 12mm 25mm;
+  background: #fff;
+  color: #171717;
+  color-scheme: light;
+  font-size: 10pt;
+  line-height: 1.45;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.08);
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  @page timesheet {
+    size: A4;
+    margin: 15mm 0 12mm;
+  }
+
+  .invoice-sheet {
+    min-height: 296mm;
+    margin: 0;
+    box-shadow: none;
+  }
+
+  .invoice-sheet-break {
+    page: timesheet;
+    break-before: page;
+    min-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}

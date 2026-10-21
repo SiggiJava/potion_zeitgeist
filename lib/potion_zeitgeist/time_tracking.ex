@@ -1,7 +1,8 @@
 defmodule PotionZeitgeist.TimeTracking do
   import Ecto.Query
 
-  alias PotionZeitgeist.{Projects, Repo}
+  alias PotionZeitgeist.{Invoicing, Projects, Repo}
+  alias PotionZeitgeist.Invoicing.InvoiceEntry
   alias PotionZeitgeist.TimeTracking.{Export, TimeEntry}
 
   def get_active_entry(user_id) do
@@ -14,11 +15,18 @@ defmodule PotionZeitgeist.TimeTracking do
     )
   end
 
+  @doc """
+  Entries of a user, newest first, with `invoiced` set for entries on a draft
+  or issued invoice.
+  """
   def list_entries(user_id) do
     Repo.all(
       from e in TimeEntry,
+        left_join: ie in InvoiceEntry,
+        on: ie.time_entry_id == e.id and ie.active,
         where: e.user_id == ^user_id,
         order_by: [desc: e.clock_in],
+        select_merge: %{invoiced: not is_nil(ie.id)},
         preload: [:project]
     )
   end
@@ -81,10 +89,12 @@ defmodule PotionZeitgeist.TimeTracking do
   Books a running or finished entry to another project (or to none with `nil`).
   """
   def set_entry_project(%TimeEntry{} = entry, project_id) do
-    entry
-    |> TimeEntry.edit_changeset(%{project_id: project_id})
-    |> validate_bookable_project()
-    |> Repo.update()
+    unless_invoiced(entry, fn ->
+      entry
+      |> TimeEntry.edit_changeset(%{project_id: project_id})
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
   end
 
   @doc """
@@ -126,11 +136,17 @@ defmodule PotionZeitgeist.TimeTracking do
     |> Repo.update()
   end
 
+  @doc """
+  Updates an entry. Entries on a draft or issued invoice cannot be changed and
+  return `{:error, :invoiced}`.
+  """
   def update_entry(%TimeEntry{} = entry, attrs) do
-    entry
-    |> TimeEntry.edit_changeset(attrs)
-    |> validate_bookable_project()
-    |> Repo.update()
+    unless_invoiced(entry, fn ->
+      entry
+      |> TimeEntry.edit_changeset(attrs)
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
   end
 
   # New bookings may only go to active projects. Keeping the project an entry
@@ -149,8 +165,30 @@ defmodule PotionZeitgeist.TimeTracking do
     end
   end
 
+  @doc """
+  Deletes an entry, unless it is on a draft or issued invoice
+  (`{:error, :invoiced}`).
+  """
   def delete_entry(%TimeEntry{} = entry) do
-    Repo.delete(entry)
+    unless_invoiced(entry, fn -> Repo.delete(entry) end)
+  end
+
+  # Billed time must keep matching its invoice. Cancelling the invoice (or
+  # deleting the draft) unlocks the entry again. The row lock waits for an
+  # invoice that is being saved with this entry right now.
+  defp unless_invoiced(%TimeEntry{id: id}, change) do
+    Repo.transaction(fn ->
+      Repo.one(from e in TimeEntry, where: e.id == ^id, lock: "FOR UPDATE", select: e.id)
+
+      if Invoicing.entry_invoiced?(id) do
+        Repo.rollback(:invoiced)
+      else
+        case change.() do
+          {:ok, result} -> result
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end
+    end)
   end
 
   def change_entry(%TimeEntry{} = entry, attrs \\ %{}) do
