@@ -23,6 +23,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
      |> assign(:today_seconds, today_seconds)
      |> assign(:projects, bookable_projects(active_entry))
      |> assign(:project_select_rev, 0)
+     |> assign(:project_change, nil)
      |> assign(:now, NaiveDateTime.utc_now())}
   end
 
@@ -87,31 +88,110 @@ defmodule PotionZeitgeistWeb.DashboardLive do
     end
   end
 
+  # Picking another project for the running entry asks whether to rebook the
+  # whole session or to switch projects from now on (clock out and in again).
   @impl true
   def handle_event("change_project", %{"project_id" => project_id}, socket) do
-    case socket.assigns.active_entry do
-      nil ->
+    entry = socket.assigns.active_entry
+
+    cond do
+      is_nil(entry) ->
         {:noreply, put_flash(socket, :error, "You are not clocked in.")}
 
-      entry ->
-        case TimeTracking.set_entry_project(entry, blank_to_nil(project_id)) do
-          {:ok, updated} ->
-            {:noreply,
-             socket
-             |> assign(:active_entry, Repo.preload(updated, :project, force: true))
-             |> assign(:projects, bookable_projects(updated))
-             |> put_flash(:info, "Project updated.")}
+      project_id == "" ->
+        {:noreply, ask_project_change(socket, entry, nil, "No project")}
 
-          {:error, changeset} ->
-            # Re-render the select so it shows the project the entry is still booked to.
-            {:noreply,
-             socket
-             |> assign(:projects, bookable_projects(entry))
-             |> update(:project_select_rev, &(&1 + 1))
-             |> put_flash(:error, booking_error(changeset, "Could not change the project."))}
-        end
+      project = Enum.find(socket.assigns.projects, &(to_string(&1.id) == project_id)) ->
+        {:noreply, ask_project_change(socket, entry, project.id, project.name)}
+
+      true ->
+        {:noreply, project_change_failed(socket, nil, "Could not change the project.")}
     end
   end
+
+  @impl true
+  def handle_event("rebook_project", _params, socket) do
+    %{active_entry: entry, project_change: change} = socket.assigns
+
+    case change && entry && TimeTracking.set_entry_project(entry, change.project_id) do
+      {:ok, updated} ->
+        updated = Repo.preload(updated, :project, force: true)
+
+        {:noreply,
+         socket
+         |> assign(:active_entry, updated)
+         |> assign(:projects, bookable_projects(updated))
+         |> assign(:project_change, nil)
+         |> put_flash(:info, "The whole session is now booked to #{change.name}.")}
+
+      error ->
+        {:noreply, project_change_failed(socket, error, "Could not rebook the session.")}
+    end
+  end
+
+  @impl true
+  def handle_event("switch_project", _params, socket) do
+    %{active_entry: entry, project_change: change} = socket.assigns
+
+    case change && entry && TimeTracking.switch_project(entry, change.project_id) do
+      {:ok, new_entry} ->
+        new_entry = Repo.preload(new_entry, :project)
+
+        {:noreply,
+         socket
+         |> assign(:active_entry, new_entry)
+         |> assign(:projects, bookable_projects(new_entry))
+         |> assign(:project_change, nil)
+         |> assign(
+           :today_seconds,
+           TimeTracking.today_total_seconds(socket.assigns.current_user.id)
+         )
+         |> put_flash(
+           :info,
+           "Switched to #{change.name}. The time so far stays on #{project_label(entry)}."
+         )}
+
+      error ->
+        {:noreply, project_change_failed(socket, error, "Could not switch the project.")}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_project_change", _params, socket) do
+    # Re-render the select so it shows the project the entry is still booked to.
+    {:noreply,
+     socket
+     |> assign(:project_change, nil)
+     |> update(:project_select_rev, &(&1 + 1))}
+  end
+
+  defp ask_project_change(socket, %{project_id: project_id}, project_id, _name), do: socket
+
+  defp ask_project_change(socket, _entry, project_id, name) do
+    assign(socket, :project_change, %{project_id: project_id, name: name})
+  end
+
+  # Reloads the running entry, which may have been clocked out or changed
+  # elsewhere in the meantime, and re-renders the project select.
+  defp project_change_failed(socket, error, fallback) do
+    changeset =
+      case error do
+        {:error, %Ecto.Changeset{} = changeset} -> changeset
+        _ -> nil
+      end
+
+    active_entry = TimeTracking.get_active_entry(socket.assigns.current_user.id)
+
+    socket
+    |> assign(:active_entry, active_entry)
+    |> assign(:projects, bookable_projects(active_entry))
+    |> assign(:project_change, nil)
+    |> update(:project_select_rev, &(&1 + 1))
+    |> put_flash(:error, booking_error(changeset, fallback))
+  end
+
+  defp project_label(%{project: %{name: name}}), do: name
+  defp project_label(_entry), do: "No project"
 
   defp bookable_projects(nil), do: Projects.list_active_projects()
   defp bookable_projects(entry), do: Projects.list_bookable_projects(entry.project_id)
@@ -237,6 +317,63 @@ defmodule PotionZeitgeistWeb.DashboardLive do
           </div>
         </div>
       </div>
+
+      <% # Project change dialog %>
+      <%= if @project_change && @active_entry do %>
+        <div id="project-change-modal" class="modal modal-open">
+          <div class="modal-box">
+            <h3 class="font-bold text-lg">Change project</h3>
+            <p class="text-sm text-base-content/70 mt-2">
+              You have been working on
+              <span class="font-semibold text-base-content">{project_label(@active_entry)}</span>
+              since {Calendar.strftime(@active_entry.clock_in, "%H:%M")}. How should
+              <span class="font-semibold text-base-content">{@project_change.name}</span>
+              apply?
+            </p>
+
+            <div class="grid gap-3 mt-5">
+              <button
+                id="rebook-project"
+                phx-click="rebook_project"
+                class="btn btn-outline h-auto py-3 justify-start text-left gap-3"
+              >
+                <.icon name="hero-arrow-path" class="size-5 shrink-0" />
+                <span>
+                  <span class="block font-semibold">Rebook</span>
+                  <span class="block text-xs font-normal opacity-70">
+                    Book the whole session since {Calendar.strftime(@active_entry.clock_in, "%H:%M")} to {@project_change.name}.
+                  </span>
+                </span>
+              </button>
+              <button
+                id="switch-project"
+                phx-click="switch_project"
+                class="btn btn-primary h-auto py-3 justify-start text-left gap-3"
+              >
+                <.icon name="hero-arrows-right-left" class="size-5 shrink-0" />
+                <span>
+                  <span class="block font-semibold">Switch project</span>
+                  <span class="block text-xs font-normal opacity-80">
+                    Keep the time until now on {project_label(@active_entry)} and continue on {@project_change.name} from now.
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <div class="modal-action">
+              <button
+                id="cancel-project-change"
+                type="button"
+                phx-click="cancel_project_change"
+                class="btn btn-ghost"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+          <div class="modal-backdrop" phx-click="cancel_project_change"></div>
+        </div>
+      <% end %>
 
       <% # Quick Links %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -87,6 +87,37 @@ defmodule PotionZeitgeist.TimeTracking do
     |> Repo.update()
   end
 
+  @doc """
+  Clocks the running entry out now and clocks in again on `project_id` (or on
+  no project with `nil`), so the time worked so far stays on the old project.
+  Returns the new running entry.
+  """
+  def switch_project(%TimeEntry{} = entry, project_id) do
+    # Re-read the entry so a clock-out made elsewhere is never overwritten.
+    case get_active_entry(entry.user_id) do
+      %TimeEntry{id: id} = running when id == entry.id -> do_switch_project(running, project_id)
+      _ -> {:error, :not_clocked_in}
+    end
+  end
+
+  defp do_switch_project(entry, project_id) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    new_entry =
+      %TimeEntry{}
+      |> TimeEntry.changeset(%{user_id: entry.user_id, project_id: project_id, clock_in: now})
+      |> validate_bookable_project()
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.update(:previous, TimeEntry.clock_out_changeset(entry, %{clock_out: now}))
+    |> Ecto.Multi.insert(:current, new_entry)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{current: current}} -> {:ok, current}
+      {:error, _step, changeset, _changes} -> {:error, changeset}
+    end
+  end
+
   def clock_out(%TimeEntry{} = entry) do
     entry
     |> TimeEntry.clock_out_changeset(%{
