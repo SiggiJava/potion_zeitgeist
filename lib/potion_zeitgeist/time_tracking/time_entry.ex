@@ -8,15 +8,17 @@ defmodule PotionZeitgeist.TimeTracking.TimeEntry do
     field :notes, PotionZeitgeist.Encrypted.Binary, source: :encrypted_notes
 
     belongs_to :user, PotionZeitgeist.Accounts.User
+    belongs_to :project, PotionZeitgeist.Projects.Project
 
     timestamps()
   end
 
   def changeset(entry, attrs) do
     entry
-    |> cast(attrs, [:clock_in, :clock_out, :notes, :user_id])
+    |> cast(attrs, [:clock_in, :clock_out, :notes, :user_id, :project_id])
     |> validate_required([:clock_in, :user_id])
     |> validate_clock_order()
+    |> assoc_constraint(:project)
   end
 
   def clock_out_changeset(entry, attrs) do
@@ -28,9 +30,10 @@ defmodule PotionZeitgeist.TimeTracking.TimeEntry do
 
   def edit_changeset(entry, attrs) do
     entry
-    |> cast(attrs, [:clock_in, :clock_out, :notes])
+    |> cast(attrs, [:clock_in, :clock_out, :notes, :project_id])
     |> validate_required([:clock_in])
     |> validate_clock_order()
+    |> assoc_constraint(:project)
   end
 
   defp validate_clock_order(changeset) do

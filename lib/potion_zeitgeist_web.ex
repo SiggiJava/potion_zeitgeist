@@ -86,6 +86,7 @@ defmodule PotionZeitgeistWeb do
       import Phoenix.HTML
       # Core UI components
       import PotionZeitgeistWeb.CoreComponents
+      import PotionZeitgeistWeb.ProjectComponents
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

@@ -125,10 +125,19 @@ defmodule PotionZeitgeistWeb.Admin.UsersLive do
     <div class="space-y-6">
       <div class="flex items-center justify-between flex-wrap gap-3">
         <h1 class="text-2xl font-bold">User Management</h1>
-        <button phx-click="show_create" class="btn btn-primary btn-sm gap-2">
-          <.icon name="hero-user-plus" class="size-4" />
-          New User
-        </button>
+        <div class="flex gap-2 flex-wrap">
+          <a
+            id="export-all-daily"
+            href={~p"/export/all"}
+            class="btn btn-outline btn-sm gap-2"
+            title="Daily totals of all users, split by project"
+          >
+            <.icon name="hero-arrow-down-tray" class="size-4" /> Export all daily totals
+          </a>
+          <button phx-click="show_create" class="btn btn-primary btn-sm gap-2">
+            <.icon name="hero-user-plus" class="size-4" /> New User
+          </button>
+        </div>
       </div>
 
       <div class="card bg-base-100 shadow overflow-x-auto">

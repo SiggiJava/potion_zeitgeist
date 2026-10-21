@@ -56,20 +56,17 @@ defmodule PotionZeitgeistWeb.Layouts do
               </li>
               <li>
                 <.link navigate="/" class="gap-3 font-medium">
-                  <.icon name="hero-home" class="size-4" />
-                  Dashboard
+                  <.icon name="hero-home" class="size-4" /> Dashboard
                 </.link>
               </li>
               <li>
                 <.link navigate="/entries" class="gap-3 font-medium">
-                  <.icon name="hero-list-bullet" class="size-4" />
-                  My Entries
+                  <.icon name="hero-list-bullet" class="size-4" /> My Entries
                 </.link>
               </li>
               <li>
                 <a href="/export/my-entries" class="gap-3 font-medium">
-                  <.icon name="hero-arrow-down-tray" class="size-4" />
-                  Export My Data
+                  <.icon name="hero-arrow-down-tray" class="size-4" /> Export My Data
                 </a>
               </li>
 
@@ -79,8 +76,12 @@ defmodule PotionZeitgeistWeb.Layouts do
                 </li>
                 <li>
                   <.link navigate="/admin/users" class="gap-3 font-medium">
-                    <.icon name="hero-users" class="size-4" />
-                    Users
+                    <.icon name="hero-users" class="size-4" /> Users
+                  </.link>
+                </li>
+                <li>
+                  <.link navigate="/admin/projects" class="gap-3 font-medium">
+                    <.icon name="hero-briefcase" class="size-4" /> Projects
                   </.link>
                 </li>
               <% end %>
@@ -110,8 +111,7 @@ defmodule PotionZeitgeistWeb.Layouts do
                   type="submit"
                   class="btn btn-ghost btn-sm w-full justify-start gap-3 font-medium"
                 >
-                  <.icon name="hero-arrow-right-on-rectangle" class="size-4" />
-                  Sign Out
+                  <.icon name="hero-arrow-right-on-rectangle" class="size-4" /> Sign Out
                 </button>
               </form>
             <% end %>

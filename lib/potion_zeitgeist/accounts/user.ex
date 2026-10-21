@@ -60,9 +60,7 @@ defmodule PotionZeitgeist.Accounts.User do
 
   defp validate_email(changeset) do
     changeset
-    |> validate_format(:email, ~r/^[^\s]+@[^\s]+$/,
-      message: "must contain @ and no spaces"
-    )
+    |> validate_format(:email, ~r/^[^\s]+@[^\s]+$/, message: "must contain @ and no spaces")
     |> validate_length(:email, max: 254)
     |> unique_constraint(:email_hash,
       name: :users_email_hash_index,
