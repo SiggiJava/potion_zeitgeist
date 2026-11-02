@@ -35,15 +35,18 @@ defmodule PotionZeitgeist.Invoicing do
 
   def get_template!(id), do: Repo.get!(InvoiceTemplate, id)
 
-  def create_template(attrs) do
+  # The template functions take the date of the sample letter that texts are
+  # measured with, see `InvoiceTemplate.changeset/3`; the form passes the
+  # date of its preview.
+  def create_template(attrs, today \\ today()) do
     %InvoiceTemplate{}
-    |> InvoiceTemplate.changeset(attrs)
+    |> InvoiceTemplate.changeset(attrs, today)
     |> Repo.insert()
   end
 
-  def update_template(%InvoiceTemplate{} = template, attrs) do
+  def update_template(%InvoiceTemplate{} = template, attrs, today \\ today()) do
     template
-    |> InvoiceTemplate.changeset(attrs)
+    |> InvoiceTemplate.changeset(attrs, today)
     |> Repo.update()
   end
 
@@ -53,8 +56,8 @@ defmodule PotionZeitgeist.Invoicing do
   """
   def delete_template(%InvoiceTemplate{} = template), do: Repo.delete(template)
 
-  def change_template(%InvoiceTemplate{} = template, attrs \\ %{}) do
-    InvoiceTemplate.changeset(template, attrs)
+  def change_template(%InvoiceTemplate{} = template, attrs \\ %{}, today \\ today()) do
+    InvoiceTemplate.changeset(template, attrs, today)
   end
 
   @doc """
@@ -767,25 +770,28 @@ defmodule PotionZeitgeist.Invoicing do
   # has its line limits are checked when saved (with sample values for the
   # placeholders), so this mostly catches older texts and long numbers.
   defp layout_warnings(invoice, params) do
-    letter =
+    invoice =
       invoice
       |> Invoice.issue_changeset(params, Letter.texts(invoice))
       |> Ecto.Changeset.apply_changes()
-      |> Letter.build()
+
+    texts = Letter.texts(invoice)
+    vars = Letter.vars(invoice, texts)
+    fill = &Letter.fill(&1, vars)
 
     warnings =
-      for {box, text} <- [
-            sender: "The sender address of the template",
-            recipient: "The recipient",
-            tax_id: "The tax number line of the template",
-            footer: "The footer of the template"
+      for {box, text, fill, name} <- [
+            {:sender, texts.sender, fill, "The sender address of the template"},
+            {:recipient, invoice.recipient, &Function.identity/1, "The recipient"},
+            {:tax_id, texts.tax_id, fill, "The tax number line of the template"},
+            {:footer, texts.footer, fill, "The footer of the template"}
           ],
-          {:error, message} <- [LetterLayout.check(Map.fetch!(letter, box), box)],
-          do: {box, "#{text} #{message}."}
+          {:error, message} <- [LetterLayout.check(text, box, fill)],
+          do: {box, "#{name} #{message}."}
 
     return_line =
       with false <- List.keymember?(warnings, :sender, 0),
-           {:error, message} <- LetterLayout.check(letter.sender_line, :return) do
+           {:error, message} <- LetterLayout.check(Letter.build(invoice).sender_line, :return) do
         ["The sender address of the template #{message}."]
       else
         _ -> []

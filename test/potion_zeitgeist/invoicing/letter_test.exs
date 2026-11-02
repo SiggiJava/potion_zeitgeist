@@ -85,6 +85,24 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
     assert letter.footer == "IBAN DE12"
   end
 
+  test "boxed texts print without invisible characters and with composed umlauts" do
+    sender = :unicode.characters_to_nfd_binary("Michael Bäcker\nHauptstraße 1\n12345 Musterstadt")
+
+    letter =
+      Letter.build(
+        issued_invoice(%{
+          recipient: "Kunden\u00ADservice GmbH\nWeg\u200B 2\n10115 Berlin",
+          letter_sender: sender,
+          letter_footer: "IBAN\u2060 DE12"
+        })
+      )
+
+    assert letter.recipient == "Kundenservice GmbH\nWeg 2\n10115 Berlin"
+    assert letter.sender == "Michael Bäcker\nHauptstraße 1\n12345 Musterstadt"
+    assert letter.sender_line == "Michael Bäcker · Hauptstraße 1 · 12345 Musterstadt"
+    assert letter.footer == "IBAN DE12"
+  end
+
   test "builds VAT rows in standard tax mode" do
     letter =
       Letter.build(

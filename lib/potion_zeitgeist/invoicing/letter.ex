@@ -12,9 +12,11 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   service period, items, totals and, for small businesses, the § 19 UStG note.
   """
 
-  alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice}
+  alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice, LetterLayout}
 
-  @placeholder ~r/\{\{\s*([a-z_]+)\s*\}\}/
+  # A placeholder stays on one line, so each line of a text can be filled
+  # (and measured, see `PotionZeitgeist.Invoicing.LetterLayout.check/3`) on its own.
+  @placeholder ~r/\{\{[ \t]*([a-z_]+)[ \t]*\}\}/
   @items_placeholder ~r/\{\{\s*positionen\s*\}\}/
 
   # A postcode line such as "12345 Musterstadt", "D-12345 Musterstadt" or "A-1010 Wien".
@@ -137,14 +139,13 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     texts = texts(invoice)
     vars = vars(invoice, texts)
     {before_items, after_items} = texts.body |> fill(vars) |> split_body()
-    # Line breaks print as they are, so text must not start or end with one.
-    sender = texts.sender |> fill(vars) |> String.trim()
+    sender = texts.sender |> fill(vars) |> boxed()
 
     %{
       watermark: watermark(invoice.status),
       sender: sender,
       sender_line: sender_line(sender),
-      recipient: String.trim(invoice.recipient || ""),
+      recipient: boxed(invoice.recipient),
       info: info(invoice, vars),
       subject: texts.subject |> fill(vars) |> String.trim(),
       before_items: before_items,
@@ -152,16 +153,28 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       items: Enum.map(invoice.items, &item_row/1),
       totals: total_rows(invoice),
       tax_note: if(invoice.tax_mode == "standard", do: nil, else: @small_business_note),
-      tax_id: texts.tax_id |> fill(vars) |> String.trim(),
-      footer: texts.footer |> fill(vars) |> String.trim(),
+      tax_id: texts.tax_id |> fill(vars) |> boxed(),
+      footer: texts.footer |> fill(vars) |> boxed(),
       timesheet: timesheet(invoice, entries, vars)
     }
   end
 
+  # A text printed in a box of fixed size, see
+  # `PotionZeitgeist.Invoicing.LetterLayout`: without invisible characters
+  # that could change its line breaks, and without line breaks at the start
+  # or end, which would print as blank lines.
+  defp boxed(text), do: text |> LetterLayout.clean() |> String.trim()
+
   @doc """
   The letter of `template` filled with sample data, for the template preview.
   """
-  def sample(template, today) do
+  def sample(template, today), do: template |> sample_invoice(today) |> build()
+
+  @doc """
+  An issued invoice of `template` with sample data, the one `sample/2`
+  shows.
+  """
+  def sample_invoice(template, today) do
     previous = today |> Date.beginning_of_month() |> Date.add(-1)
     rate = Decimal.new(85)
 
@@ -183,7 +196,7 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
     totals = Calculation.totals(items, 0)
 
-    build(%Invoice{
+    %Invoice{
       status: "issued",
       number: "#{today.year}-001",
       invoice_date: today,
@@ -203,7 +216,7 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       letter_subject: template.subject,
       letter_body: template.body,
       letter_footer: template.footer
-    })
+    }
   end
 
   defp number(%Invoice{number: number}) when is_binary(number) and number != "", do: number

@@ -292,6 +292,19 @@ defmodule PotionZeitgeist.InvoicingTest do
              ]
     end
 
+    test "need a recipient the invoice font can print", ctx do
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{
+                   "recipient" => "Kunde GmbH 🚀\nWeg 2\n10115 Berlin"
+                 })
+               )
+
+      assert errors_on(changeset).recipient == [
+               "has characters the invoice font does not have: 🚀"
+             ]
+    end
+
     test "check the stored recipient with every save", ctx do
       draft = draft_fixture(ctx.template, ctx.entries)
       too_long = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
@@ -640,6 +653,22 @@ defmodule PotionZeitgeist.InvoicingTest do
                "body" => "Text",
                "footer" => "\n" <> lines.(4) <> "\n"
              })
+  end
+
+  test "template texts must have only characters the invoice font has" do
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Emoji",
+               "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt\n☎ 0123 456789",
+               "tax_id" => "Steuernummer: 12/345/67890",
+               "body" => "Text",
+               "footer" => "IBAN: DE12 3456 7890 1234 5678 90 ✅"
+             })
+
+    assert errors_on(changeset) == %{
+             sender: ["has characters the invoice font does not have: ☎"],
+             footer: ["has characters the invoice font does not have: ✅"]
+           }
   end
 
   test "template texts must fit with their placeholders filled in" do

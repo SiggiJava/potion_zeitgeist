@@ -16,11 +16,14 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
         :new -> %InvoiceTemplate{}
       end
 
+    # Texts are measured with the sample letter of the preview, of this date.
+    today = Invoicing.today()
+
     # A new template starts from the sample letter.
     changeset =
       case socket.assigns.live_action do
-        :new -> Invoicing.change_template(template, sample_attrs())
-        :edit -> Invoicing.change_template(template)
+        :new -> Invoicing.change_template(template, sample_attrs(), today)
+        :edit -> Invoicing.change_template(template, %{}, today)
       end
 
     {:ok,
@@ -30,7 +33,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
        if(template.id, do: "Edit letter template", else: "New letter template")
      )
      |> assign(:template, template)
-     |> assign(:today, Invoicing.today())
+     |> assign(:today, today)
      |> assign_form(changeset)}
   end
 
@@ -38,7 +41,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
   def handle_event("validate", %{"invoice_template" => params}, socket) do
     changeset =
       socket.assigns.template
-      |> Invoicing.change_template(params)
+      |> Invoicing.change_template(params, socket.assigns.today)
       |> Map.put(:action, :validate)
 
     {:noreply, assign_form(socket, changeset)}
@@ -48,8 +51,8 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
   def handle_event("save", %{"invoice_template" => params}, socket) do
     result =
       case socket.assigns.template do
-        %InvoiceTemplate{id: nil} -> Invoicing.create_template(params)
-        template -> Invoicing.update_template(template, params)
+        %InvoiceTemplate{id: nil} -> Invoicing.create_template(params, socket.assigns.today)
+        template -> Invoicing.update_template(template, params, socket.assigns.today)
       end
 
     case result do

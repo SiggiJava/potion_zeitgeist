@@ -27,6 +27,11 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
     # Breaks after the dashes and hyphens, which leaves the lines short.
     {:recipient, "Wasserversorgungsverband–Abwasserzweckverband–Kreditorenbuchhaltung", 3},
     {:recipient, "BE-973277-WARTUNG-883348-RECHNUNGSEINGANG-INSTANDHALTUNG-105477", 3},
+    # No break after a dash that starts a word, before a letter other than a to z.
+    {:recipient,
+     "Abnahme und Einkauf Süd Schmidt und -Übergabe und Schulung Weber Lieferung Werk", 3},
+    {:recipient,
+     "Prüfung Montage Prüfung Süd Abnahme und –Änderung Weber Halle Dokumentation Wartung", 3},
     {:sender, "E-Mail: max.mustermann@beispiel-domain-mit-langem-namen.de", 2},
     {:sender, "Telefon 0123 456789 · Fax 0123 456780 · Mobil 0170 1234567", 2},
     {:footer,
@@ -49,27 +54,37 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
     end
   end
 
-  test "counts decomposed umlauts like composed ones" do
+  test "measures text as the letter prints it" do
     composed = "Bäckerei Müller & Söhne Großhandel GmbH"
     decomposed = :unicode.characters_to_nfd_binary(composed)
 
     assert decomposed != composed
+    assert LetterLayout.clean(decomposed) == composed
     assert LetterLayout.printed_lines(decomposed, :recipient) == 1
+
+    # Soft hyphens, zero width spaces and other invisible characters are
+    # left out, so they cannot add places to break a line.
+    assert LetterLayout.clean("Donau\u00ADdampf\u200Bschiff\u2060fahrt\uFEFF") ==
+             "Donaudampfschifffahrt"
+
+    assert LetterLayout.clean(nil) == ""
   end
 
-  test "never counts fewer lines than the browser for characters the font does not have" do
-    # Chromium prints both in 2 lines, with emoji from a font of the computer.
-    emoji =
-      "☎ 0123 456789 · 📱 0170 1234567 · 📠 0123 456780 · 📧 max@beispiel.de · " <>
-        "🌐 www.beispiel.de · 🏦 Musterbank Musterstadt · 💳 DE12 3456 7890 1234 5678 90"
-
-    assert LetterLayout.printed_lines(emoji, :footer) >= 2
-
+  test "refuses characters the invoice font does not have" do
+    # A browser prints them with a font of the computer, of unknown width.
     assert LetterLayout.check(
-             "Steuernummer: 12/345/67890 · ✅ USt-IdNr.: DE123456789 · ✅ Finanzamt Musterstadt · " <>
-               "✅ Handelsregister HRB 12345 Musterstadt",
-             :tax_id
-           ) == {:error, "is too long for one line of the footer"}
+             "☎ 0123 456789 · 📱 0170 1234567 · 📧 max@beispiel.de · 🌐 www.beispiel.de",
+             :footer
+           ) == {:error, "has characters the invoice font does not have: ☎ 📱 📧 🌐"}
+
+    assert LetterLayout.check("Steuernummer: 12/345/67890 ✅", :tax_id) ==
+             {:error, "has characters the invoice font does not have: ✅"}
+
+    # Characters that do not show on their own are named by their code.
+    assert LetterLayout.check("Hotline 1\uFE0F\u20E3", :sender) ==
+             {:error, "has characters the invoice font does not have: U+FE0F U+20E3"}
+
+    assert LetterLayout.check("Hans-Böckler-Straße 1 – Hinterhaus\nŁódź", :recipient) == :ok
   end
 
   test "names the lines that are too long" do
@@ -89,6 +104,18 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
     assert LetterLayout.check(Enum.join(["", long, "A", "B", "C", "D", "E"], "\n"), :recipient) ==
              {:error,
               "takes 7 lines in the address field, which has room for 6: " <>
+                "line 2 is too long for one line"}
+
+    # Line numbers of the text as typed, also when its lines are filled in.
+    fill = &String.replace(&1, "{{firma}}", long)
+
+    typed = Enum.join(["A", "{{firma}}", "B", "C", "D", "E", "F"], "\n")
+
+    assert LetterLayout.check(typed, :sender) == :ok
+
+    assert LetterLayout.check(typed, :sender, fill) ==
+             {:error,
+              "takes 8 lines in the letterhead, which has room for 7: " <>
                 "line 2 is too long for one line"}
 
     assert LetterLayout.check(String.duplicate("Steuernummer 12/345/67890 ", 8), :tax_id) ==

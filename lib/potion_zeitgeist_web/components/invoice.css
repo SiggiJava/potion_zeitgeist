@@ -25,7 +25,12 @@
   the bottom edge (--inv-footer-lines, set by the letter component). The
   line limits that keep every box at its place are checked when a template
   or invoice is saved, in PotionZeitgeist.Invoicing.LetterLayout, which
-  needs to know the widths and font sizes of these boxes.
+  measures with the glyph widths and kerning of the font files below
+  (priv/invoice_font/metrics.txt) and needs to know the widths and font
+  sizes of these boxes. It counts on the text settings of .inv-sheet and
+  .inv-footer (no ligatures or contextual alternates, unhinted widths, no
+  hyphenation): change those, the font files or a box, and LetterLayout and
+  its metrics have to change with them.
 */
 
 /* Inter, shipped in priv/static/fonts/inter (SIL Open Font License), under a
@@ -97,6 +102,12 @@
   color: inherit;
   font: inherit;
   font-variant-numeric: inherit;
+  font-variant-ligatures: inherit;
+  font-feature-settings: inherit;
+  text-rendering: inherit;
+  hyphens: inherit;
+  word-break: inherit;
+  line-break: inherit;
   letter-spacing: normal;
   word-spacing: normal;
   text-align: inherit;
@@ -143,8 +154,14 @@
   text-align: left;
   white-space: normal;
   overflow-wrap: break-word;
+  word-break: normal;
+  line-break: auto;
+  hyphens: manual;
   font-kerning: normal;
+  font-variant-ligatures: none;
+  font-feature-settings: normal;
   font-synthesis: none;
+  text-rendering: geometricPrecision;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   -webkit-print-color-adjust: exact;
@@ -430,9 +447,21 @@
   font-family: "Invoice Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 7.5pt;
   font-weight: 400;
+  font-style: normal;
   line-height: 1.35;
   text-align: center;
+  white-space: normal;
   overflow-wrap: break-word;
+  word-break: normal;
+  line-break: auto;
+  hyphens: manual;
+  letter-spacing: normal;
+  word-spacing: normal;
+  font-kerning: normal;
+  font-variant-ligatures: none;
+  font-feature-settings: normal;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
 }
 
 /* ENTWURF / STORNIERT across the page; never takes a click. */
@@ -558,7 +587,11 @@
 
   body:not(.inv-print-page) .inv-print-hint {
     display: block;
+    padding: 3mm 4mm;
+    background: #fff;
     color: #171717;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 12pt;
     line-height: 1.4;
