@@ -69,10 +69,10 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     [invoice] = Invoicing.list_invoices()
     assert invoice.status == "draft"
     assert Invoicing.entry_ids(invoice) == [hd(ctx.entries).id]
-    assert has_element?(show, "#invoice-letter .invoice-watermark", "ENTWURF")
-    # Only app.css may place the watermark over the sheet: with an outdated
-    # stylesheet a positioning utility made it cover the page's buttons.
-    refute has_element?(show, ".invoice-watermark.absolute")
+    assert has_element?(show, "#invoice-letter .inv-watermark", "ENTWURF")
+    # The letter is styled only by its own invoice.css, so no utility class
+    # of app.css (outdated or not) can move or cover anything on it.
+    assert letter_classes(show) |> Enum.reject(&String.starts_with?(&1, "inv-")) == []
 
     show |> element("#issue-invoice") |> render_click()
     assert has_element?(show, "#last-issued", "first invoice")
@@ -92,6 +92,14 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert html =~ "Gemäß § 19 UStG"
     assert html =~ "Steuernummer: 12/345/67890"
     assert html =~ "Tätigkeitsnachweis"
+
+    # The print page brings its own styles and fonts and none of the asset
+    # build, so an outdated app.css or app.js cannot change the invoice.
+    assert html =~ ".inv-sheet {"
+    assert html =~ ~s(href="/fonts/inter/inter-latin-400-normal.woff2")
+    refute html =~ "/assets/"
+    # Footer and watermark are repeated in <body> for every printed page.
+    assert [_, _] = Regex.scan(~r/<footer class="inv-footer/, html)
   end
 
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do
@@ -327,5 +335,14 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
 
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/admin/invoices")
     assert conn |> get(~p"/admin/invoices/1/print") |> redirected_to() == ~p"/"
+  end
+
+  defp letter_classes(view) do
+    html = view |> element("#invoice-letter") |> render()
+
+    ~r/class="([^"]*)"/
+    |> Regex.scan(html, capture: :all_but_first)
+    |> Enum.flat_map(fn [classes] -> String.split(classes) end)
+    |> Enum.uniq()
   end
 end

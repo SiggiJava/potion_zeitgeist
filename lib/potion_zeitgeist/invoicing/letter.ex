@@ -22,6 +22,10 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   @small_business_note "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung)."
 
+  # Lines the fixed boxes of the printed invoice hold, see invoice.css: the
+  # letterhead, the address field of a window envelope and the page footer.
+  @max_lines %{sender: 7, recipient: 6, footer: 4}
+
   @placeholders [
     {"rechnungsnummer", "Invoice number (\"ENTWURF\" while the invoice is a draft)"},
     {"rechnungsdatum", "Invoice date"},
@@ -45,6 +49,20 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   def tag(name), do: "{{" <> name <> "}}"
 
   def small_business_note, do: @small_business_note
+
+  @doc """
+  The most lines `field` may have to fit its fixed box on the printed
+  invoice: `:sender`, `:recipient` or `:footer`.
+  """
+  def max_lines(field), do: Map.fetch!(@max_lines, field)
+
+  @doc "The number of lines `text` prints with, blank lines between them included."
+  def line_count(text) do
+    case String.trim(text || "") do
+      "" -> 0
+      text -> text |> String.split(["\r\n", "\n"]) |> length()
+    end
+  end
 
   @doc "Replaces known placeholders in `text` with values from `vars`."
   def fill(nil, _vars), do: ""
@@ -137,22 +155,23 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     texts = texts(invoice)
     vars = vars(invoice, texts)
     {before_items, after_items} = texts.body |> fill(vars) |> split_body()
-    sender = fill(texts.sender, vars)
+    # Line breaks print as they are, so text must not start or end with one.
+    sender = texts.sender |> fill(vars) |> String.trim()
 
     %{
       watermark: watermark(invoice.status),
       sender: sender,
       sender_line: sender_line(sender),
-      recipient: invoice.recipient || "",
+      recipient: String.trim(invoice.recipient || ""),
       info: info(invoice, vars),
-      subject: fill(texts.subject, vars),
+      subject: texts.subject |> fill(vars) |> String.trim(),
       before_items: before_items,
       after_items: after_items,
       items: Enum.map(invoice.items, &item_row/1),
       totals: total_rows(invoice),
       tax_note: if(invoice.tax_mode == "standard", do: nil, else: @small_business_note),
-      tax_id: fill(texts.tax_id, vars),
-      footer: fill(texts.footer, vars),
+      tax_id: texts.tax_id |> fill(vars) |> String.trim(),
+      footer: texts.footer |> fill(vars) |> String.trim(),
       timesheet: timesheet(invoice, entries, vars)
     }
   end

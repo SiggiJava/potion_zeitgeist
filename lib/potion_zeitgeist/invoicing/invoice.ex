@@ -2,7 +2,7 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias PotionZeitgeist.Invoicing.Calculation
+  alias PotionZeitgeist.Invoicing.{Calculation, Letter}
 
   @statuses ~w(draft issued cancelled)
   @rate_modes ~w(single per_project)
@@ -163,14 +163,24 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
     end
   end
 
-  # German invoices need the recipient's full name and address.
+  # German invoices need the recipient's full name and address, and the
+  # address field of the printed invoice (a window envelope's) holds 6 lines.
   defp validate_recipient(changeset) do
+    max = Letter.max_lines(:recipient)
+
     validate_change(changeset, :recipient, fn :recipient, recipient ->
       lines = recipient |> String.split(["\r\n", "\n"]) |> Enum.reject(&(String.trim(&1) == ""))
 
-      if length(lines) >= 2,
-        do: [],
-        else: [recipient: "needs the name and the full address, on separate lines"]
+      cond do
+        length(lines) < 2 ->
+          [recipient: "needs the name and the full address, on separate lines"]
+
+        Letter.line_count(recipient) > max ->
+          [recipient: "has more than #{max} lines, the address field has room for #{max}"]
+
+        true ->
+          []
+      end
     end)
   end
 

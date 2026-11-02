@@ -37,11 +37,6 @@ topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
-// Print buttons, e.g. on the invoice print page
-document.addEventListener("click", e => {
-  if (e.target.closest("[data-print]")) window.print()
-})
-
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 

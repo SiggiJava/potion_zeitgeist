@@ -2,6 +2,8 @@ defmodule PotionZeitgeist.Invoicing.InvoiceTemplate do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias PotionZeitgeist.Invoicing.Letter
+
   schema "invoice_templates" do
     field :name, :string
     # Name and address of the business, printed top right and as return address.
@@ -24,6 +26,19 @@ defmodule PotionZeitgeist.Invoicing.InvoiceTemplate do
     |> validate_length(:name, max: 120)
     |> validate_length(:tax_id, max: 255)
     |> validate_length(:subject, max: 255)
+    |> validate_lines(:sender)
+    |> validate_lines(:footer)
     |> unique_constraint(:name, message: "already exists")
+  end
+
+  # Letterhead and footer have boxes of a fixed size on the printed invoice.
+  defp validate_lines(changeset, field) do
+    max = Letter.max_lines(field)
+
+    validate_change(changeset, field, fn ^field, text ->
+      if Letter.line_count(text) > max,
+        do: [{field, "has more than #{max} lines, the invoice has room for #{max}"}],
+        else: []
+    end)
   end
 end

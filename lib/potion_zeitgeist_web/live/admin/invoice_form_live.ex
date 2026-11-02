@@ -600,7 +600,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                   field={@form[:recipient]}
                   id="invoice-recipient"
                   type="textarea"
-                  label="Recipient (name and full address)"
+                  label="Recipient (name and full address, at most 6 lines)"
                   rows="4"
                   phx-debounce="300"
                 />

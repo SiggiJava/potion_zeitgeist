@@ -105,7 +105,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
                 <.input
                   field={@form[:sender]}
                   type="textarea"
-                  label="Your name and address (letterhead, top right)"
+                  label="Your name and address (letterhead, top right, at most 7 lines)"
                   rows="6"
                   required
                   phx-debounce="300"
@@ -134,7 +134,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
                 <.input
                   field={@form[:footer]}
                   type="textarea"
-                  label="Footer (bank details)"
+                  label="Footer (bank details, at most 4 lines)"
                   rows="3"
                   phx-debounce="300"
                 />

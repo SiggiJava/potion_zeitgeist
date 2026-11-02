@@ -247,6 +247,26 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert [_] = errors.recipient
     end
 
+    test "need a recipient that fits the address field of the letter", ctx do
+      recipient = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => recipient})
+               )
+
+      assert errors_on(changeset).recipient == [
+               "has more than 6 lines, the address field has room for 6"
+             ]
+
+      six_lines = recipient |> String.split("\n") |> Enum.take(6) |> Enum.join("\n")
+
+      assert {:ok, _invoice} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => six_lines <> "\n"})
+               )
+    end
+
     test "cannot bill time twice", ctx do
       draft_fixture(ctx.template, ctx.entries)
 
@@ -515,6 +535,33 @@ defmodule PotionZeitgeist.InvoicingTest do
   test "templates need sender, tax number and text" do
     assert {:error, changeset} = Invoicing.create_template(%{"name" => "X"})
     assert %{sender: [_], tax_id: [_], body: [_]} = errors_on(changeset)
+  end
+
+  test "letterhead and footer of a template must fit their boxes on the letter" do
+    lines = fn count -> Enum.map_join(1..count, "\n", &"Zeile #{&1}") end
+
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Long",
+               "sender" => lines.(8),
+               "tax_id" => "Steuernummer: 1",
+               "body" => "Text",
+               "footer" => lines.(3) <> "\n\n" <> lines.(2)
+             })
+
+    assert errors_on(changeset) == %{
+             sender: ["has more than 7 lines, the invoice has room for 7"],
+             footer: ["has more than 4 lines, the invoice has room for 4"]
+           }
+
+    assert {:ok, _template} =
+             Invoicing.create_template(%{
+               "name" => "Fits",
+               "sender" => lines.(7),
+               "tax_id" => "Steuernummer: 1",
+               "body" => "Text",
+               "footer" => "\n" <> lines.(4) <> "\n"
+             })
   end
 
   defp ids(entries), do: Enum.map(entries, & &1.id)
