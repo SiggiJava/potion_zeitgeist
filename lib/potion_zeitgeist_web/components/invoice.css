@@ -239,13 +239,17 @@
   white-space: nowrap;
 }
 
-/* Dates come with no-break spaces from the letter component, so they keep
-   to one line; all digits have the same width, so every period fits. */
 .inv-info dd {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+/* Dates and the service period keep to one line; all digits have the same
+   width, so every period fits. */
+.inv-info .inv-date {
+  white-space: nowrap;
 }
 
 /* ---- Letter text ---- */
@@ -361,12 +365,14 @@
   width: 19mm;
 }
 
+/* Wide enough for the largest rate (8 digits) and amount (10 digits) the
+   app accepts, so a number never runs into the next column. */
 .inv-col-rate {
-  width: 27mm;
+  width: 29.5mm;
 }
 
 .inv-col-amount {
-  width: 29mm;
+  width: 33mm;
 }
 
 .inv-timesheet {
@@ -453,7 +459,8 @@
 }
 
 .inv-page-footer,
-.inv-page-watermark {
+.inv-page-watermark,
+.inv-print-hint {
   display: none;
 }
 
@@ -541,7 +548,22 @@
     margin: 0;
   }
 
-  /* Any printed letter, also from the invoice page of the app. */
+  /* Only the print page prints the letter. Printed from any other page, the
+     browser would scale it to its page margins and add the app around it,
+     which moves the address out of the envelope window; those pages print
+     a hint to use the print page instead. */
+  body:not(.inv-print-page) .inv-sheet {
+    display: none;
+  }
+
+  body:not(.inv-print-page) .inv-print-hint {
+    display: block;
+    color: #171717;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 12pt;
+    line-height: 1.4;
+  }
+
   .inv-sheet {
     min-height: 0;
     box-shadow: none;

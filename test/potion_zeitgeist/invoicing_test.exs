@@ -468,6 +468,29 @@ defmodule PotionZeitgeist.InvoicingTest do
              ]
     end
 
+    test "measures the letter with the number and date of the issue form", ctx do
+      footer =
+        "Zeile 1\nZeile 2\nZeile 3\nBitte geben Sie bei Zahlung die Rechnungsnummer " <>
+          "{{rechnungsnummer}} an: Musterbank · IBAN DE12 3456 7890 1234 5678 90"
+
+      # Fits with the number of the preview.
+      {:ok, template} = Invoicing.update_template(ctx.template, %{"footer" => footer})
+      draft = draft_fixture(template, ctx.entries)
+
+      assert Invoicing.issue_warnings(draft, %{
+               "number" => "2026-001",
+               "invoice_date" => "2026-11-02"
+             }) == []
+
+      assert Invoicing.issue_warnings(draft, %{
+               "number" => "RE-2026-11-0001 Projekt Website-Relaunch",
+               "invoice_date" => "2026-11-02"
+             }) == [
+               "The footer of the template takes 5 lines in the footer, which has room for 4: " <>
+                 "line 4 is too long for one line."
+             ]
+    end
+
     test "the time sheet survives deleting the user", ctx do
       {:ok, entry} = TimeTracking.update_entry(hd(ctx.entries), %{"notes" => "Startseite"})
       draft = draft_fixture(ctx.template, [entry])
@@ -617,6 +640,56 @@ defmodule PotionZeitgeist.InvoicingTest do
                "body" => "Text",
                "footer" => "\n" <> lines.(4) <> "\n"
              })
+  end
+
+  test "template texts must fit with their placeholders filled in" do
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Placeholders",
+               "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt",
+               "tax_id" =>
+                 "USt-IdNr.: DE123456789 · Steuernummer: 12/345/67890 · Finanzamt Musterstadt",
+               "body" => "Text",
+               "footer" =>
+                 "Zeile 1\nZeile 2\nZeile 3\n" <>
+                   "Inhaber: Max Mustermann · {{steuernummer}} · Gerichtsstand Musterstadt"
+             })
+
+    assert errors_on(changeset) == %{
+             footer: [
+               "takes 5 lines in the footer, which has room for 4: line 4 is too long for one " <>
+                 "line with its placeholders filled in as in the preview"
+             ]
+           }
+  end
+
+  test "the letterhead must give a return address that fits above the recipient" do
+    sender =
+      Enum.join(
+        [
+          "Dr. rer. nat. Maximilian Alexander Mustermann-Schmidtbauer, öffentlich bestellter " <>
+            "und vereidigter Sachverständiger für Informationstechnologie",
+          "Ingenieurbüro für Informationstechnologie, Datenschutz und IT-Sicherheit, " <>
+            "Musterstraße 123, Hinterhaus",
+          "12345 Musterstadt"
+        ],
+        "\n"
+      )
+
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Long return address",
+               "sender" => sender,
+               "tax_id" => "Steuernummer: 12/345/67890",
+               "body" => "Text"
+             })
+
+    assert errors_on(changeset) == %{
+             sender: [
+               "gives a return address of 5 lines above the recipient, which has room for 4: " <>
+                 "shorten the lines with name, street, postcode and city"
+             ]
+           }
   end
 
   test "a template saved before the line limits is checked with its next save" do

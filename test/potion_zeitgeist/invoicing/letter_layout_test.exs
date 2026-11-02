@@ -24,6 +24,9 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
     {:recipient, "z. Hd. Frau Dr. Erika Musterfrau-Schmidtbauer", 1},
     {:recipient, "Abteilung Einkauf, Rechnungsprüfung und Kreditorenbuchhaltung", 2},
     {:recipient, "Hans-Böckler-Straße 123, Hinterhaus links, Aufgang C", 2},
+    # Breaks after the dashes and hyphens, which leaves the lines short.
+    {:recipient, "Wasserversorgungsverband–Abwasserzweckverband–Kreditorenbuchhaltung", 3},
+    {:recipient, "BE-973277-WARTUNG-883348-RECHNUNGSEINGANG-INSTANDHALTUNG-105477", 3},
     {:sender, "E-Mail: max.mustermann@beispiel-domain-mit-langem-namen.de", 2},
     {:sender, "Telefon 0123 456789 · Fax 0123 456780 · Mobil 0170 1234567", 2},
     {:footer,
@@ -32,13 +35,41 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
     {:footer,
      "Max Mustermann Softwareentwicklung und IT-Beratung GmbH & Co. KG · Sitz Musterstadt · " <>
        "Amtsgericht Musterstadt HRA 12345 · Komplementärin: Max Mustermann Verwaltungs GmbH, " <>
-       "Amtsgericht Musterstadt HRB 67890", 2}
+       "Amtsgericht Musterstadt HRB 67890", 2},
+    {:return,
+     "Dr. rer. nat. Maximilian Alexander Mustermann-Schmidtbauer, öffentlich bestellter " <>
+       "und vereidigter Sachverständiger für Informationstechnologie · Ingenieurbüro für " <>
+       "Informationstechnologie, Datenschutz und IT-Sicherheit, Musterstraße 123, " <>
+       "Hinterhaus · 12345 Musterstadt", 5}
   ]
 
   test "breaks lines where the browser does" do
     for {box, text, lines} <- @browser do
       assert {text, LetterLayout.printed_lines(text, box)} == {text, lines}
     end
+  end
+
+  test "counts decomposed umlauts like composed ones" do
+    composed = "Bäckerei Müller & Söhne Großhandel GmbH"
+    decomposed = :unicode.characters_to_nfd_binary(composed)
+
+    assert decomposed != composed
+    assert LetterLayout.printed_lines(decomposed, :recipient) == 1
+  end
+
+  test "never counts fewer lines than the browser for characters the font does not have" do
+    # Chromium prints both in 2 lines, with emoji from a font of the computer.
+    emoji =
+      "☎ 0123 456789 · 📱 0170 1234567 · 📠 0123 456780 · 📧 max@beispiel.de · " <>
+        "🌐 www.beispiel.de · 🏦 Musterbank Musterstadt · 💳 DE12 3456 7890 1234 5678 90"
+
+    assert LetterLayout.printed_lines(emoji, :footer) >= 2
+
+    assert LetterLayout.check(
+             "Steuernummer: 12/345/67890 · ✅ USt-IdNr.: DE123456789 · ✅ Finanzamt Musterstadt · " <>
+               "✅ Handelsregister HRB 12345 Musterstadt",
+             :tax_id
+           ) == {:error, "is too long for one line of the footer"}
   end
 
   test "names the lines that are too long" do
@@ -54,7 +85,18 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
               "takes 7 lines in the address field, which has room for 6: " <>
                 "lines 1 and 3 are too long for one line"}
 
+    # Line numbers as typed, blank lines at the start included.
+    assert LetterLayout.check(Enum.join(["", long, "A", "B", "C", "D", "E"], "\n"), :recipient) ==
+             {:error,
+              "takes 7 lines in the address field, which has room for 6: " <>
+                "line 2 is too long for one line"}
+
     assert LetterLayout.check(String.duplicate("Steuernummer 12/345/67890 ", 8), :tax_id) ==
              {:error, "is too long for one line of the footer"}
+
+    assert LetterLayout.check(String.duplicate("Musterstraße 1 · ", 18), :return) ==
+             {:error,
+              "gives a return address of 5 lines above the recipient, which has room for 4: " <>
+                "shorten the lines with name, street, postcode and city"}
   end
 end

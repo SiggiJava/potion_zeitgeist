@@ -35,6 +35,9 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
     ~H"""
     <div id={@id} class="inv-document" style={"--inv-footer-lines: #{footer_lines(@letter)}"}>
       {if @style, do: invoice_style()}
+      <p class="inv-print-hint">
+        Invoices print from their print view: open the invoice and choose "Print / PDF".
+      </p>
       <article class="inv-sheet">
         <.watermark :if={@letter.watermark} text={@letter.watermark} />
 
@@ -52,7 +55,8 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
             <dl class="inv-info">
               <%= for {label, value} <- @letter.info do %>
                 <dt>{label}</dt>
-                <dd>{value |> to_string() |> String.replace(" ", "\u00A0")}</dd>
+                <%!-- Everything but the invoice number is a date or a period. --%>
+                <dd class={label != "Rechnungsnummer" && "inv-date"}>{value}</dd>
               <% end %>
             </dl>
           </div>

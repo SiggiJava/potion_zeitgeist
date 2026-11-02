@@ -73,6 +73,8 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     # The letter is styled only by its own invoice.css, so no utility class
     # of app.css (outdated or not) can move or cover anything on it.
     assert letter_classes(show) |> Enum.reject(&String.starts_with?(&1, "inv-")) == []
+    # Printed from this page, the letter gives way to a hint to use the print page.
+    assert has_element?(show, "#invoice-letter .inv-print-hint", "Print / PDF")
 
     show |> element("#issue-invoice") |> render_click()
     assert has_element?(show, "#last-issued", "first invoice")
@@ -102,6 +104,7 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert [_, _] = Regex.scan(~r/<footer class="inv-footer/, html)
     # The pages keep room for the footer's two lines (tax number, bank).
     assert html =~ ~s(style="--inv-footer-lines: 2")
+    assert html =~ "body:not(.inv-print-page) .inv-sheet"
   end
 
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do

@@ -757,23 +757,41 @@ defmodule PotionZeitgeist.Invoicing do
         "The date is before invoice #{last.number} of #{Calendar.strftime(last.invoice_date, "%Y-%m-%d")}."
     ]
     |> Enum.filter(&is_binary/1)
-    |> Enum.concat(layout_warnings(invoice))
+    |> Enum.concat(layout_warnings(invoice, params))
   end
 
-  # Texts saved before the letter had its line limits. They still print
+  # Texts too long for their place on the letter, measured as the letter will
+  # print once issued with the number and date of the form. They still print
   # cleanly, but move the address out of the envelope window or take room
-  # from the letter text.
-  defp layout_warnings(invoice) do
-    letter = Letter.build(invoice)
+  # from the letter text. Templates and recipients saved since the letter
+  # has its line limits are checked when saved (with sample values for the
+  # placeholders), so this mostly catches older texts and long numbers.
+  defp layout_warnings(invoice, params) do
+    letter =
+      invoice
+      |> Invoice.issue_changeset(params, Letter.texts(invoice))
+      |> Ecto.Changeset.apply_changes()
+      |> Letter.build()
 
-    for {box, text} <- [
-          sender: "The sender address of the template",
-          recipient: "The recipient",
-          tax_id: "The tax number line of the template",
-          footer: "The footer of the template"
-        ],
-        {:error, message} <- [LetterLayout.check(Map.fetch!(letter, box), box)],
-        do: "#{text} #{message}."
+    warnings =
+      for {box, text} <- [
+            sender: "The sender address of the template",
+            recipient: "The recipient",
+            tax_id: "The tax number line of the template",
+            footer: "The footer of the template"
+          ],
+          {:error, message} <- [LetterLayout.check(Map.fetch!(letter, box), box)],
+          do: {box, "#{text} #{message}."}
+
+    return_line =
+      with false <- List.keymember?(warnings, :sender, 0),
+           {:error, message} <- LetterLayout.check(letter.sender_line, :return) do
+        ["The sender address of the template #{message}."]
+      else
+        _ -> []
+      end
+
+    Enum.map(warnings, &elem(&1, 1)) ++ return_line
   end
 
   @doc "The most recently issued (or cancelled) invoice."

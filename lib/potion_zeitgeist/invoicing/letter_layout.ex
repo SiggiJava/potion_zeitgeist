@@ -5,10 +5,17 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   lib/potion_zeitgeist_web/components/invoice.css.
 
   The invoice brings its own font (Inter, in priv/static/fonts/inter), so
-  the width of every line is known in advance. Lines are broken here the way
-  the browser breaks them: at spaces, after a hyphen between two letters, and
-  inside a word that is wider than the box. Where the browser has more ways
-  to break a line, it needs fewer lines than counted here, never more.
+  the width of every line is known in advance. Lines are broken here where
+  Chromium breaks them: at spaces, after hyphens and dashes (see
+  break_after?/3), and inside a word wider than the box. Where in doubt the
+  count is one line too many, not too few: characters the font does not have
+  count as wide as a fallback font may print them, and a line that wraps
+  counts one line more when it has characters other than Latin letters,
+  digits and common punctuation, or a word with punctuation wider than the
+  box, as the browser may break those at places not modelled here. Checked
+  against Chromium with about 50,000 generated addresses, letterheads and
+  footers, also with dashes, slashes, emoji, other scripts and decomposed
+  umlauts.
 
   A text over its limit still prints cleanly, it only moves what follows
   further down (see invoice.css). The limits keep the address in the window
@@ -23,13 +30,17 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     # Footer with bank details, at the bottom of every page.
     footer: %{width_mm: 165, size_pt: 7.5, lines: 4, name: "the footer"},
     # The tax number line, at the top of the footer.
-    tax_id: %{width_mm: 165, size_pt: 7.5, lines: 1, name: "the footer"}
+    tax_id: %{width_mm: 165, size_pt: 7.5, lines: 1, name: "the footer"},
+    # The return address in small print above the recipient, made from the
+    # letterhead by `PotionZeitgeist.Invoicing.Letter.build/2`.
+    return: %{width_mm: 80, size_pt: 7, lines: 4, name: "the return address line"}
   }
 
   # Advance widths of Inter Regular as shipped, in font units (2048 per em),
   # measured in Chromium. Each row starts with the code point of its first
-  # character in hex: U+0020 to U+007E, U+00A0 to U+017F, then punctuation.
-  # Any other character counts as 1 em, about as wide as a "W".
+  # character in hex: U+0020 to U+007E, U+00A0 to U+017F, punctuation, then
+  # the few other letters and signs of the font wider than 1 em. For any
+  # other character see other_width/1.
   #
   # Kerning moves some pairs of letters apart ("rn", "AA"), so each character
   # counts @kerning units more. Checked against Chromium with 18,000 made-up
@@ -70,6 +81,21 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
           20AC 1365
           2122 1251
           2212 1355
+          01C4 2730 2609 2385 2327
+          01CA 2712
+          01F1 2766 2609 2385
+          01F6 2290
+          02A3 2229 2052 2059
+          2030 2735 3459
+          2047 2094
+          20A8 2295
+          20AF 2848
+          2C72 2124
+          A732 2559
+          A734 2464
+          A736 2339
+          A74E 2781 2086
+          A7FF 2415
           """
           |> String.split("\n", trim: true)
           |> Enum.flat_map(fn row ->
@@ -82,7 +108,22 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
           end)
           |> Map.new()
 
-  @doc "How many lines `box` holds: `:sender`, `:recipient`, `:footer` or `:tax_id`."
+  # Characters after which Chromium breaks a word before a letter or digit:
+  # dashes, ellipsis, question mark, zero width space and the narrow spaces.
+  @breaking Enum.map(
+              ~c"–—‐…?" ++
+                [0x200B, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2008, 0x2009, 0x200A] ++
+                [0x205F, 0x3000],
+              &<<&1::utf8>>
+            )
+
+  # Anything but Latin letters, digits and common punctuation.
+  @unusual ~r/[^\t\x{20}-\x{7E}\x{A0}-\x{17F}–—‘’‚“”„…€]/u
+
+  @doc """
+  How many lines `box` holds: `:sender`, `:recipient`, `:footer`, `:tax_id`
+  or `:return`.
+  """
   def max_lines(box), do: Map.fetch!(@boxes, box).lines
 
   @doc """
@@ -94,13 +135,20 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   @doc "`:ok`, or `{:error, message}` when `text` takes more lines than `box` holds."
   def check(text, box) do
     %{lines: max, name: name} = Map.fetch!(@boxes, box)
-    counts = line_counts(text, box)
-    total = Enum.sum(counts)
-    wrapped = for {count, number} <- Enum.with_index(counts, 1), count > 1, do: number
+    counts = numbered_counts(text, box)
+    total = counts |> Enum.map(&elem(&1, 0)) |> Enum.sum()
+    wrapped = for {count, number} <- counts, count > 1, do: number
 
     cond do
       total <= max ->
         :ok
+
+      # The return address is made from the letterhead, see
+      # `PotionZeitgeist.Invoicing.Letter.build/2`, so the message is about that.
+      box == :return ->
+        {:error,
+         "gives a return address of #{total} lines above the recipient, which has room " <>
+           "for #{max}: shorten the lines with name, street, postcode and city"}
 
       max == 1 ->
         {:error, "is too long for one line of #{name}"}
@@ -122,14 +170,43 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     "lines #{Enum.join(rest, ", ")} and #{last} are"
   end
 
-  # The printed lines of each line of `text`. The letter prints texts
-  # trimmed, see `PotionZeitgeist.Invoicing.Letter.build/2`.
-  defp line_counts(text, box) do
-    case String.trim(text || "") do
-      "" -> []
-      text -> text |> String.split(["\r\n", "\n", "\r"]) |> Enum.map(&wrapped_lines(&1, box))
+  defp line_counts(text, box), do: text |> numbered_counts(box) |> Enum.map(&elem(&1, 0))
+
+  # The printed lines of each line of `text`, with its number in `text`. The
+  # letter prints texts trimmed (see `PotionZeitgeist.Invoicing.Letter.build/2`),
+  # so blank lines at the start and end do not count.
+  defp numbered_counts(text, box) do
+    (text || "")
+    |> normalize()
+    |> String.split(["\r\n", "\n", "\r"])
+    |> Enum.with_index(1)
+    |> Enum.drop_while(&blank?/1)
+    |> Enum.reverse()
+    |> Enum.drop_while(&blank?/1)
+    |> Enum.reverse()
+    |> Enum.map(fn {line, number} -> {line_count(line, box), number} end)
+  end
+
+  # One line to spare for a line that wraps and has characters whose breaks
+  # are not modelled. A line that fits needs none: the widths here are upper
+  # bounds.
+  defp line_count(line, box) do
+    case wrapped_lines(line, box) do
+      1 -> 1
+      count -> if line =~ @unusual, do: count + 1, else: count
     end
   end
+
+  # Composed characters, as the browser prints them: "a" with a combining
+  # diaeresis is measured as one "ä".
+  defp normalize(text) do
+    case :unicode.characters_to_nfc_binary(text) do
+      normalized when is_binary(normalized) -> normalized
+      _invalid -> text
+    end
+  end
+
+  defp blank?({line, _number}), do: String.trim(line) == ""
 
   # Fills lines like the browser: a piece of text goes on the current line
   # if it fits and starts the next line otherwise. A piece wider than a whole
@@ -152,8 +229,8 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
 
           cond do
             used + gap + width <= available -> {lines, used + gap + width}
-            used > 0 -> split_piece(piece, lines + 1, available)
-            true -> split_piece(piece, lines, available)
+            used > 0 -> split_piece(piece, width, lines + 1, available)
+            true -> split_piece(piece, width, lines, available)
           end
         end)
       end)
@@ -161,21 +238,65 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     lines
   end
 
-  # A word may break after a hyphen between two letters ("Berlin-|Mitte"),
-  # not before a digit ("A-1", "12-14").
-  defp pieces(word), do: String.split(word, ~r/(?<=\p{L}-)(?=\p{L})/u)
+  # The parts of a word between the places where Chromium may break it.
+  defp pieces(word) do
+    chars = String.codepoints(word)
 
-  # Places `piece` at the start of line `lines`, on further lines if needed.
-  defp split_piece(piece, lines, available) do
-    piece
-    |> String.graphemes()
-    |> Enum.reduce({lines, 0}, fn char, {lines, used} ->
-      width = width(char)
+    {pieces, last} =
+      [nil | chars]
+      |> Enum.zip(chars)
+      |> Enum.zip(tl(chars) ++ [nil])
+      |> Enum.reduce({[], ""}, fn {{previous, char}, next}, {pieces, current} ->
+        current = current <> char
 
-      if used > 0 and used + width > available,
-        do: {lines + 1, width},
-        else: {lines, used + width}
-    end)
+        if break_after?(previous, char, next),
+          do: {[current | pieces], ""},
+          else: {pieces, current}
+      end)
+
+    Enum.reverse(if last == "", do: pieces, else: [last | pieces])
+  end
+
+  # Where Chromium breaks a word, as measured. It breaks in more places, for
+  # example after "/" before "Ö"; those missing here only make the count
+  # higher, see split_piece/4.
+  # - after "-" before a letter ("Berlin-|Mitte"), and before a digit when
+  #   an ASCII letter or digit comes first ("BE-|973277", not "ä-1")
+  # - after a dash, "…", "?", a zero width or narrow space before a letter
+  #   or digit
+  defp break_after?(_previous, _char, nil), do: false
+
+  defp break_after?(previous, "-", next),
+    do: letter?(next) or (digit?(next) and ascii_alnum?(previous))
+
+  defp break_after?(_previous, char, next) when char in @breaking,
+    do: letter?(next) or digit?(next)
+
+  defp break_after?(_previous, _char, _next), do: false
+
+  defp letter?(char), do: char =~ ~r/^\p{L}$/u
+  defp digit?(char), do: char =~ ~r/^\p{Nd}$/u
+  defp ascii_alnum?(nil), do: false
+  defp ascii_alnum?(char), do: char =~ ~r/^[A-Za-z0-9]$/
+
+  # Places `piece` (`width` wide) at the start of line `lines`, on further
+  # lines if it is wider than a line. Chromium may then break it earlier at
+  # punctuation, so such a piece counts one line more.
+  defp split_piece(piece, width, lines, available) do
+    {lines, used} =
+      piece
+      |> String.graphemes()
+      |> Enum.reduce({lines, 0}, fn char, {lines, used} ->
+        width = width(char)
+
+        if used > 0 and used + width > available,
+          do: {lines + 1, width},
+          else: {lines, used + width}
+      end)
+
+    if width > available and piece =~ ~r/[^\p{L}\p{N}\p{M}]/u,
+      do: {lines + 1, used},
+      else: {lines, used}
   end
 
   # The box width in font units of its text size.
@@ -190,5 +311,33 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     |> Enum.reduce(0, fn char, sum -> sum + char_width(char) end)
   end
 
-  defp char_width(char), do: Map.get(@widths, char, @units_per_em) + @kerning
+  defp char_width(char) do
+    case Map.fetch(@widths, char) do
+      {:ok, 0} -> 0
+      {:ok, width} -> width + @kerning
+      :error -> other_width(char)
+    end
+  end
+
+  # Characters missing from the table. Combining marks and invisible format
+  # characters take no room. Inter's other Latin letters and signs are at
+  # most 1 em. Everything else prints in a fallback font of the computer, as
+  # wide as measured there at most: other scripts up to 1.4 em, Chinese,
+  # Japanese and Korean up to 1.15 em, emoji and symbols up to 1.75 em.
+  defp other_width(char) do
+    cond do
+      <<char::utf8>> =~ ~r/^[\p{Mn}\p{Me}\p{Cf}]$/u -> 0
+      inter_latin?(char) -> @units_per_em + @kerning
+      char in 0x0370..0x1CFF -> round(1.4 * @units_per_em)
+      char in 0x2E80..0x9FFF or char in 0xAC00..0xD7AF or char in 0xF900..0xFAFF -> 2355
+      char in 0xFF00..0xFFEF -> 2355
+      true -> round(1.75 * @units_per_em)
+    end
+  end
+
+  # The latin-ext ranges of priv/static/fonts/inter, see invoice.css.
+  defp inter_latin?(char) do
+    char in 0x0100..0x02FF or char in 0x1D00..0x1EFF or char in 0x2000..0x20C0 or
+      char in 0x2C60..0x2C7F or char in 0xA720..0xA7FF
+  end
 end
