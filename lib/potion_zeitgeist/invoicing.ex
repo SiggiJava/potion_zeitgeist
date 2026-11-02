@@ -13,7 +13,7 @@ defmodule PotionZeitgeist.Invoicing do
 
   alias PotionZeitgeist.Repo
   alias PotionZeitgeist.Invoicing.{Calculation, Invoice, InvoiceEntry, InvoiceItem}
-  alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter}
+  alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout}
   alias PotionZeitgeist.TimeTracking.TimeEntry
 
   @payment_days 14
@@ -737,11 +737,12 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Hints for the issue form that do not block issuing: sample texts left in
-  the letter, a number that does not follow the last one, and a date before
-  the last invoice.
+  the letter, a number that does not follow the last one, a date before the
+  last invoice, and texts too long for their place on the letter.
   """
   def issue_warnings(%Invoice{} = invoice, params) do
-    letter = invoice |> Repo.preload(:template) |> Letter.texts()
+    invoice = Repo.preload(invoice, [:template, :items])
+    letter = Letter.texts(invoice)
     text = Enum.join([letter.sender, letter.tax_id, letter.body, letter.footer], "\n")
     last = last_issued()
     number = params["number"] && String.trim(params["number"])
@@ -756,6 +757,23 @@ defmodule PotionZeitgeist.Invoicing do
         "The date is before invoice #{last.number} of #{Calendar.strftime(last.invoice_date, "%Y-%m-%d")}."
     ]
     |> Enum.filter(&is_binary/1)
+    |> Enum.concat(layout_warnings(invoice))
+  end
+
+  # Texts saved before the letter had its line limits. They still print
+  # cleanly, but move the address out of the envelope window or take room
+  # from the letter text.
+  defp layout_warnings(invoice) do
+    letter = Letter.build(invoice)
+
+    for {box, text} <- [
+          sender: "The sender address of the template",
+          recipient: "The recipient",
+          tax_id: "The tax number line of the template",
+          footer: "The footer of the template"
+        ],
+        {:error, message} <- [LetterLayout.check(Map.fetch!(letter, box), box)],
+        do: "#{text} #{message}."
   end
 
   @doc "The most recently issued (or cancelled) invoice."

@@ -10,16 +10,22 @@
   utility classes, and the rules below reset what browser and app styles set.
 
   Page coordinates (mm from the top left corner of the page):
-    letterhead         sender block top right, from y 10 down to at most 45
+    letterhead         sender block top right, x 105 to 190, y 10 to 45
     address field      x 20 to 105, y 45 to 90 (return address line at the
-                       bottom of the first 17.7, then 6 lines of recipient)
-    information block  x 120 to 190, from y 50
+                       bottom of the first 17.7, then 6 lines of recipient
+                       from x 25)
+    information block  x 115 to 190, from y 50
     letter text        x 25 to 190, from y 98.5 on page 1, from y 20 on
                        further pages, down to 36 above the bottom edge
     footer             x 25 to 190, ends 10 above the bottom edge, on every page
 
-  The line limits for sender, recipient and footer that keep these boxes from
-  overflowing are in PotionZeitgeist.Invoicing.Letter.max_lines/1.
+  Nothing is placed absolutely except the footer, so nothing can print over
+  anything else. A letterhead or address longer than its box moves what
+  follows down; a footer with more lines keeps the letter text further from
+  the bottom edge (--inv-footer-lines, set by the letter component). The
+  line limits that keep every box at its place are checked when a template
+  or invoice is saved, in PotionZeitgeist.Invoicing.LetterLayout, which
+  needs to know the widths and font sizes of these boxes.
 */
 
 /* Inter, shipped in priv/static/fonts/inter (SIL Open Font License), under a
@@ -121,8 +127,11 @@
   min-height: 297mm;
   margin: 0 auto;
   /* The letter text area. Page 1 pulls its letterhead up into the top
-     padding; the bottom padding keeps text clear of the footer. */
+     padding; the bottom padding keeps text clear of the footer: 10 mm
+     below it, 2.5 mm above its first line, 3.6 mm for each of its lines
+     and 4 mm above it, at least 36 mm. */
   padding: 20mm 20mm 36mm 25mm;
+  padding-bottom: max(36mm, calc(16.5mm + var(--inv-footer-lines, 0) * 3.6mm));
   background: #fff;
   color: #171717;
   color-scheme: light;
@@ -151,42 +160,54 @@
   white-space: pre-line;
 }
 
-/* ---- Page 1: letterhead, address field and information block ---- */
+/* ---- Page 1: letterhead, address field and information block ----
+   In normal flow, with fixed widths and minimum heights: a text that fits
+   its box keeps everything at the positions above, a longer one moves what
+   follows down instead of running into it. */
 
 .inv-head {
-  position: relative;
-  display: block;
-  /* From the top edge of the page to the line of the subject. */
-  height: 98.5mm;
+  display: flow-root;
+  /* From the top edge of the page across its full width, down to the line
+     of the subject; 8.5 mm stay free below the address field. */
+  min-height: 98.5mm;
   margin: -20mm -20mm 0 -25mm;
+  padding: 10mm 20mm 8.5mm;
 }
 
 .inv-sender {
-  position: absolute;
-  top: 10mm;
-  right: 20mm;
   width: 85mm;
+  min-height: 35mm;
+  margin-left: auto;
   color: #404040;
   font-size: 8.5pt;
   line-height: 1.35;
   text-align: right;
 }
 
+.inv-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
 .inv-address {
-  position: absolute;
-  top: 45mm;
-  left: 20mm;
+  flex: none;
   width: 85mm;
-  height: 45mm;
+  min-height: 45mm;
+  padding-left: 5mm;
 }
 
 /* The return address sits on the bottom of the 17.7 mm high zone above the
    recipient and grows upwards if it ever needs two lines. */
+.inv-return-zone {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 17.7mm;
+  padding-bottom: 1mm;
+}
+
 .inv-return {
-  position: absolute;
-  bottom: 28.3mm;
-  left: 5mm;
-  right: 5mm;
   padding-bottom: 0.6mm;
   border-bottom: 0.5pt solid #a3a3a3;
   color: #525252;
@@ -195,19 +216,15 @@
 }
 
 .inv-recipient {
-  position: absolute;
-  top: 17.7mm;
-  left: 5mm;
-  right: 5mm;
+  min-height: 27.3mm;
   font-size: 10pt;
   line-height: 4.2mm;
 }
 
 .inv-info {
-  position: absolute;
-  top: 50mm;
-  left: 120mm;
-  width: 70mm;
+  flex: none;
+  width: 75mm;
+  margin-top: 5mm;
   display: grid;
   /* Labels keep their width; a long invoice number wraps inside its column. */
   grid-template-columns: max-content minmax(0, 1fr);
@@ -222,8 +239,11 @@
   white-space: nowrap;
 }
 
+/* Dates come with no-break spaces from the letter component, so they keep
+   to one line; all digits have the same width, so every period fits. */
 .inv-info dd {
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   text-align: right;
   overflow-wrap: anywhere;
 }
@@ -523,6 +543,7 @@
 
   /* Any printed letter, also from the invoice page of the app. */
   .inv-sheet {
+    min-height: 0;
     box-shadow: none;
   }
 
@@ -551,7 +572,6 @@
      further page keeps the same margins and stays clear of the footer. */
   .inv-print-page .inv-sheet {
     page: invoice;
-    min-height: 0;
     margin: 0;
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;

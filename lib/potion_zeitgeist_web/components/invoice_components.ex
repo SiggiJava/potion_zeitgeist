@@ -5,6 +5,8 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
   """
   use Phoenix.Component
 
+  alias PotionZeitgeist.Invoicing.LetterLayout
+
   # The invoice layout is plain CSS that is compiled into this module and sent
   # inline with the letter, see the notes at the top of invoice.css.
   @invoice_css_path Path.join(__DIR__, "invoice.css")
@@ -31,7 +33,7 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
 
   def letter(assigns) do
     ~H"""
-    <div id={@id} class="inv-document">
+    <div id={@id} class="inv-document" style={"--inv-footer-lines: #{footer_lines(@letter)}"}>
       {if @style, do: invoice_style()}
       <article class="inv-sheet">
         <.watermark :if={@letter.watermark} text={@letter.watermark} />
@@ -39,17 +41,21 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
         <div class="inv-head">
           <div class="inv-sender inv-pre" phx-no-format>{@letter.sender}</div>
 
-          <div class="inv-address">
-            <div :if={@letter.sender_line != ""} class="inv-return">{@letter.sender_line}</div>
-            <div class="inv-recipient inv-pre" phx-no-format>{@letter.recipient}</div>
-          </div>
+          <div class="inv-head-row">
+            <div class="inv-address">
+              <div class="inv-return-zone">
+                <div :if={@letter.sender_line != ""} class="inv-return">{@letter.sender_line}</div>
+              </div>
+              <div class="inv-recipient inv-pre" phx-no-format>{@letter.recipient}</div>
+            </div>
 
-          <dl class="inv-info">
-            <%= for {label, value} <- @letter.info do %>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            <% end %>
-          </dl>
+            <dl class="inv-info">
+              <%= for {label, value} <- @letter.info do %>
+                <dt>{label}</dt>
+                <dd>{value |> to_string() |> String.replace(" ", "\u00A0")}</dd>
+              <% end %>
+            </dl>
+          </div>
         </div>
 
         <h2 :if={@letter.subject != ""} class="inv-subject">{@letter.subject}</h2>
@@ -220,6 +226,12 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
     <.letter_footer letter={@letter} class="inv-page-footer" />
     <.watermark :if={@letter.watermark} text={@letter.watermark} class="inv-page-watermark" />
     """
+  end
+
+  # The lines the footer prints with, for the room the sheets keep free for it.
+  defp footer_lines(letter) do
+    LetterLayout.printed_lines(letter.tax_id, :tax_id) +
+      LetterLayout.printed_lines(letter.footer, :footer)
   end
 
   attr :letter, :map, required: true

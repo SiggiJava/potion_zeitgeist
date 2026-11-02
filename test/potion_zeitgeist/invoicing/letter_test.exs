@@ -85,13 +85,6 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
     assert letter.footer == "IBAN DE12"
   end
 
-  test "counts the lines a text prints with" do
-    assert Letter.line_count(nil) == 0
-    assert Letter.line_count(" \n ") == 0
-    assert Letter.line_count("\nA\r\n\r\nB\n") == 3
-    assert Letter.max_lines(:recipient) == 6
-  end
-
   test "builds VAT rows in standard tax mode" do
     letter =
       Letter.build(

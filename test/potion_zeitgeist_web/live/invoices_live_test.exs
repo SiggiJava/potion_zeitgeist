@@ -100,6 +100,8 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     refute html =~ "/assets/"
     # Footer and watermark are repeated in <body> for every printed page.
     assert [_, _] = Regex.scan(~r/<footer class="inv-footer/, html)
+    # The pages keep room for the footer's two lines (tax number, bank).
+    assert html =~ ~s(style="--inv-footer-lines: 2")
   end
 
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do

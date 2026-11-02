@@ -2,7 +2,7 @@ defmodule PotionZeitgeist.Invoicing.InvoiceTemplate do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias PotionZeitgeist.Invoicing.Letter
+  alias PotionZeitgeist.Invoicing.LetterLayout
 
   schema "invoice_templates" do
     field :name, :string
@@ -26,19 +26,19 @@ defmodule PotionZeitgeist.Invoicing.InvoiceTemplate do
     |> validate_length(:name, max: 120)
     |> validate_length(:tax_id, max: 255)
     |> validate_length(:subject, max: 255)
-    |> validate_lines(:sender)
-    |> validate_lines(:footer)
+    |> validate_box(:sender)
+    |> validate_box(:tax_id)
+    |> validate_box(:footer)
     |> unique_constraint(:name, message: "already exists")
   end
 
   # Letterhead and footer have boxes of a fixed size on the printed invoice.
-  defp validate_lines(changeset, field) do
-    max = Letter.max_lines(field)
-
-    validate_change(changeset, field, fn ^field, text ->
-      if Letter.line_count(text) > max,
-        do: [{field, "has more than #{max} lines, the invoice has room for #{max}"}],
-        else: []
-    end)
+  # The stored text is checked too, so a template saved before the limits
+  # existed is fixed with its next save.
+  defp validate_box(changeset, field) do
+    case LetterLayout.check(get_field(changeset, field), field) do
+      :ok -> changeset
+      {:error, message} -> add_error(changeset, field, message)
+    end
   end
 end

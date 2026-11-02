@@ -4,6 +4,7 @@ defmodule PotionZeitgeist.InvoicingTest do
   import PotionZeitgeist.Fixtures
 
   alias PotionZeitgeist.{Accounts, Invoicing, TimeTracking}
+  alias PotionZeitgeist.Invoicing.{Invoice, InvoiceTemplate}
 
   setup do
     user = user_fixture(%{"name" => "Michael"})
@@ -256,7 +257,7 @@ defmodule PotionZeitgeist.InvoicingTest do
                )
 
       assert errors_on(changeset).recipient == [
-               "has more than 6 lines, the address field has room for 6"
+               "has 7 lines, the address field has room for 6"
              ]
 
       six_lines = recipient |> String.split("\n") |> Enum.take(6) |> Enum.join("\n")
@@ -265,6 +266,46 @@ defmodule PotionZeitgeist.InvoicingTest do
                Invoicing.create_draft(
                  draft_params(ctx.template, ctx.entries, %{"recipient" => six_lines <> "\n"})
                )
+
+      # Six lines, but the company name needs two lines in the address field.
+      wrapping =
+        Enum.join(
+          [
+            "Musterfirma Beratungsgesellschaft für Informationstechnologie mbH",
+            "Abteilung Einkauf",
+            "z. Hd. Frau Erika Musterfrau",
+            "Hauptstraße 5",
+            "10115 Berlin",
+            "Deutschland"
+          ],
+          "\n"
+        )
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => wrapping})
+               )
+
+      assert errors_on(changeset).recipient == [
+               "takes 7 lines in the address field, which has room for 6: " <>
+                 "line 1 is too long for one line"
+             ]
+    end
+
+    test "check the stored recipient with every save", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries)
+      too_long = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
+      Repo.update_all(from(i in Invoice, where: i.id == ^draft.id), set: [recipient: too_long])
+      draft = Invoicing.get_invoice!(draft.id)
+
+      # The recipient is not changed, the stored one is checked.
+      assert {:error, changeset} =
+               Invoicing.update_draft(
+                 draft,
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => too_long})
+               )
+
+      assert [_] = errors_on(changeset).recipient
     end
 
     test "cannot bill time twice", ctx do
@@ -417,6 +458,16 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert earlier =~ "before invoice 2026-005"
     end
 
+    test "warns about texts saved before the letter had line limits", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries)
+      too_long = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
+      Repo.update_all(from(i in Invoice, where: i.id == ^draft.id), set: [recipient: too_long])
+
+      assert Invoicing.issue_warnings(Repo.reload(draft), %{}) == [
+               "The recipient has 7 lines, the address field has room for 6."
+             ]
+    end
+
     test "the time sheet survives deleting the user", ctx do
       {:ok, entry} = TimeTracking.update_entry(hd(ctx.entries), %{"notes" => "Startseite"})
       draft = draft_fixture(ctx.template, [entry])
@@ -539,19 +590,23 @@ defmodule PotionZeitgeist.InvoicingTest do
 
   test "letterhead and footer of a template must fit their boxes on the letter" do
     lines = fn count -> Enum.map_join(1..count, "\n", &"Zeile #{&1}") end
+    long = String.duplicate("Kontoinhaber Max Mustermann ", 6)
 
     assert {:error, changeset} =
              Invoicing.create_template(%{
                "name" => "Long",
                "sender" => lines.(8),
-               "tax_id" => "Steuernummer: 1",
+               "tax_id" => "Steuernummer: 1 " <> long,
                "body" => "Text",
-               "footer" => lines.(3) <> "\n\n" <> lines.(2)
+               "footer" => lines.(3) <> "\n" <> long
              })
 
     assert errors_on(changeset) == %{
-             sender: ["has more than 7 lines, the invoice has room for 7"],
-             footer: ["has more than 4 lines, the invoice has room for 4"]
+             sender: ["has 8 lines, the letterhead has room for 7"],
+             tax_id: ["is too long for one line of the footer"],
+             footer: [
+               "takes 5 lines in the footer, which has room for 4: line 4 is too long for one line"
+             ]
            }
 
     assert {:ok, _template} =
@@ -562,6 +617,20 @@ defmodule PotionZeitgeist.InvoicingTest do
                "body" => "Text",
                "footer" => "\n" <> lines.(4) <> "\n"
              })
+  end
+
+  test "a template saved before the line limits is checked with its next save" do
+    template = template_fixture()
+    too_long = Enum.map_join(1..8, "\n", &"Zeile #{&1}")
+
+    Repo.update_all(from(t in InvoiceTemplate, where: t.id == ^template.id),
+      set: [sender: too_long]
+    )
+
+    template = Invoicing.get_template!(template.id)
+
+    assert {:error, changeset} = Invoicing.update_template(template, %{"name" => "Renamed"})
+    assert errors_on(changeset) == %{sender: ["has 8 lines, the letterhead has room for 7"]}
   end
 
   defp ids(entries), do: Enum.map(entries, & &1.id)

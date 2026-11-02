@@ -22,10 +22,6 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   @small_business_note "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung)."
 
-  # Lines the fixed boxes of the printed invoice hold, see invoice.css: the
-  # letterhead, the address field of a window envelope and the page footer.
-  @max_lines %{sender: 7, recipient: 6, footer: 4}
-
   @placeholders [
     {"rechnungsnummer", "Invoice number (\"ENTWURF\" while the invoice is a draft)"},
     {"rechnungsdatum", "Invoice date"},
@@ -49,20 +45,6 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   def tag(name), do: "{{" <> name <> "}}"
 
   def small_business_note, do: @small_business_note
-
-  @doc """
-  The most lines `field` may have to fit its fixed box on the printed
-  invoice: `:sender`, `:recipient` or `:footer`.
-  """
-  def max_lines(field), do: Map.fetch!(@max_lines, field)
-
-  @doc "The number of lines `text` prints with, blank lines between them included."
-  def line_count(text) do
-    case String.trim(text || "") do
-      "" -> 0
-      text -> text |> String.split(["\r\n", "\n"]) |> length()
-    end
-  end
 
   @doc "Replaces known placeholders in `text` with values from `vars`."
   def fill(nil, _vars), do: ""
