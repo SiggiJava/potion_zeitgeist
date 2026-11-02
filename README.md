@@ -67,6 +67,19 @@ mix phx.server
 
 The app is now running at [http://localhost:4000](http://localhost:4000).
 
+#### Updating a local install
+
+After pulling new code, stop the server and run:
+
+```bash
+mix deps.get
+mix ecto.migrate
+mix assets.build
+mix phx.server
+```
+
+`mix assets.build` rebuilds the stylesheet and JavaScript, so new pages get their icons and styles even when the asset watchers of `mix phx.server` did not pick up the change. Reload the page with Ctrl+F5 afterwards.
+
 ### 6. Create the administrator account
 
 On first launch, visiting any page will redirect you to **`/setup`**, where you create the initial administrator account. This page is only shown once — it becomes inaccessible as soon as an admin exists.

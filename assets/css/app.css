@@ -126,6 +126,22 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.08);
 }
 
+/* The ENTWURF / STORNIERT watermark over a sheet. Its overlay rules live here,
+   next to the sheet's position, and not in utility classes on the markup: a
+   stylesheet built before the invoice pages has `absolute inset-0` but neither
+   these rules nor `pointer-events-none`, which turned the watermark into a
+   box over the whole page that swallowed every click. Without this rule the
+   watermark is a plain line in the letter and blocks nothing. */
+.invoice-watermark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 @media print {
   @page invoice {
     size: A4;
