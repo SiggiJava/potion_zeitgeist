@@ -779,6 +779,12 @@ defmodule PotionZeitgeist.Invoicing do
     vars = Letter.vars(invoice, texts)
     fill = &Letter.fill(&1, vars)
 
+    number =
+      case LetterLayout.check_characters(invoice.number) do
+        :ok -> []
+        {:error, message} -> ["The invoice number #{message}."]
+      end
+
     warnings =
       for {box, text, fill, name} <- [
             {:sender, texts.sender, fill, "The sender address of the template"},
@@ -786,8 +792,9 @@ defmodule PotionZeitgeist.Invoicing do
             {:tax_id, texts.tax_id, fill, "The tax number line of the template"},
             {:footer, texts.footer, fill, "The footer of the template"}
           ],
-          {:error, message} <- [LetterLayout.check(text, box, fill)],
-          do: {box, "#{name} #{message}."}
+          message <- [layout_message(text, box, fill)],
+          message != nil,
+          do: {box, "#{name}#{message}."}
 
     return_line =
       with false <- List.keymember?(warnings, :sender, 0),
@@ -797,7 +804,17 @@ defmodule PotionZeitgeist.Invoicing do
         _ -> []
       end
 
-    Enum.map(warnings, &elem(&1, 1)) ++ return_line
+    number ++ Enum.map(warnings, &elem(&1, 1)) ++ return_line
+  end
+
+  # A text that fits as typed but not with the values of this invoice says
+  # so, since the cause can be a value such as the number of the form.
+  defp layout_message(text, box, fill) do
+    case {LetterLayout.check(text, box), LetterLayout.check(text, box, fill)} do
+      {{:error, message}, _filled} -> " " <> message
+      {:ok, {:error, message}} -> ", with its placeholders filled in, " <> message
+      {:ok, :ok} -> nil
+    end
   end
 
   @doc "The most recently issued (or cancelled) invoice."

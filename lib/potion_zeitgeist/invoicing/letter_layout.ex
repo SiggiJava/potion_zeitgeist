@@ -23,6 +23,14 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   against Chromium's line breaks for generated addresses, letterheads and
   footers.
 
+  The widths are those of a browser that places characters at fractions of
+  a pixel, as Chromium does with smoothed text, the default on every system.
+  Chromium on Windows with font smoothing turned off rounds each character
+  to whole pixels, and a minimum font size in the browser settings enlarges
+  the small print; text can then take more lines than counted here. The
+  print page notices that, warns, and keeps the room the footer really
+  takes (see `PotionZeitgeistWeb.InvoiceComponents.print_toolbar/1`).
+
   A text over its limit still prints cleanly, it only moves what follows
   further down (see invoice.css). The limits keep the address in the window
   of the envelope, the letterhead above it and the footer out of the text.
@@ -116,8 +124,16 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   def clean(text) do
     case :unicode.characters_to_nfc_binary(text) do
       composed when is_binary(composed) -> String.replace(composed, ~r/\p{Cf}/u, "")
-      _invalid -> text
+      # Bytes that are not UTF-8 count as the replacement character "�",
+      # which the font does not have.
+      _invalid -> text |> replace_invalid() |> clean()
     end
+  end
+
+  defp replace_invalid(text) do
+    text
+    |> String.codepoints()
+    |> Enum.map_join(&if(String.valid?(&1), do: &1, else: "\uFFFD"))
   end
 
   @doc """
@@ -146,9 +162,24 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
 
     case unsupported(lines) do
       [] -> check_counts(counts(lines, box), box, max, name)
-      chars -> {:error, "has characters the invoice font does not have: #{Enum.join(chars, " ")}"}
+      chars -> unsupported_error(chars)
     end
   end
+
+  @doc """
+  `:ok`, or `{:error, message}` when `text` has a character the invoice
+  font does not have, for texts printed outside the boxes, such as the
+  invoice number.
+  """
+  def check_characters(text) do
+    case text |> typed_lines(&Function.identity/1) |> unsupported() do
+      [] -> :ok
+      chars -> unsupported_error(chars)
+    end
+  end
+
+  defp unsupported_error(chars),
+    do: {:error, "has characters the invoice font does not have: #{Enum.join(chars, " ")}"}
 
   defp check_counts(counts, box, max, name) do
     total = counts |> Enum.map(&elem(&1, 0)) |> Enum.sum()
@@ -187,7 +218,8 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
 
   # Each line of `text` as it prints, with its number in `text`. The letter
   # prints texts trimmed (see `PotionZeitgeist.Invoicing.Letter.build/2`),
-  # so blank lines at the start and end do not count.
+  # so blank lines at the start and end do not count, nor does a line break
+  # at the start or end of a filled in value there.
   defp typed_lines(text, fill) do
     (text || "")
     |> String.split(["\r\n", "\n", "\r"])
@@ -196,8 +228,13 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     |> Enum.drop_while(&blank?/1)
     |> Enum.reverse()
     |> Enum.drop_while(&blank?/1)
+    |> trim_edge(&String.trim_trailing/1)
     |> Enum.reverse()
+    |> trim_edge(&String.trim_leading/1)
   end
+
+  defp trim_edge([{line, number} | rest], trim), do: [{trim.(line), number} | rest]
+  defp trim_edge([], _trim), do: []
 
   defp blank?({line, _number}), do: String.trim(line) == ""
 

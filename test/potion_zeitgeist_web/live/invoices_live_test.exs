@@ -105,6 +105,13 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     # The pages keep room for the footer's two lines (tax number, bank).
     assert html =~ ~s(style="--inv-footer-lines: 2")
     assert html =~ "body:not(.inv-print-page) .inv-sheet"
+    # The print page checks the lines the browser prints: the boxes carry
+    # their limits, and the toolbar has a warning for a wider layout.
+    assert html =~ ~s(data-footer-lines="2")
+    assert html =~ ~r/class="inv-sender inv-pre"\s+data-lines="7"/
+    assert html =~ ~r/class="inv-recipient inv-pre"\s+data-lines="6"/
+    assert html =~ ~r/class="inv-return"\s+data-lines="4"/
+    assert html =~ ~s(id="inv-layout-warning")
   end
 
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do

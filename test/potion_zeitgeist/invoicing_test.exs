@@ -499,8 +499,23 @@ defmodule PotionZeitgeist.InvoicingTest do
                "number" => "RE-2026-11-0001 Projekt Website-Relaunch",
                "invoice_date" => "2026-11-02"
              }) == [
-               "The footer of the template takes 5 lines in the footer, which has room for 4: " <>
-                 "line 4 is too long for one line."
+               "The footer of the template, with its placeholders filled in, takes 5 lines " <>
+                 "in the footer, which has room for 4: line 4 is too long for one line."
+             ]
+    end
+
+    test "warns about characters of the issue form the invoice font does not have", ctx do
+      footer = "IBAN: DE12 3456 7890 1234 5678 90 · Verwendungszweck: {{rechnungsnummer}}"
+      {:ok, template} = Invoicing.update_template(ctx.template, %{"footer" => footer})
+      draft = draft_fixture(template, ctx.entries)
+
+      assert Invoicing.issue_warnings(draft, %{
+               "number" => "2026-001 ✓",
+               "invoice_date" => "2026-11-02"
+             }) == [
+               "The invoice number has characters the invoice font does not have: ✓.",
+               "The footer of the template, with its placeholders filled in, has characters " <>
+                 "the invoice font does not have: ✓."
              ]
     end
 

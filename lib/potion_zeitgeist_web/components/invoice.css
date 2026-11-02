@@ -30,7 +30,9 @@
   sizes of these boxes. It counts on the text settings of .inv-sheet and
   .inv-footer (no ligatures or contextual alternates, unhinted widths, no
   hyphenation): change those, the font files or a box, and LetterLayout and
-  its metrics have to change with them.
+  its metrics have to change with them. A browser that still sets the text
+  wider (Windows without font smoothing, a minimum font size) is caught by
+  the print page, see PotionZeitgeistWeb.InvoiceComponents.print_toolbar/1.
 */
 
 /* Inter, shipped in priv/static/fonts/inter (SIL Open Font License), under a
@@ -140,7 +142,8 @@
   /* The letter text area. Page 1 pulls its letterhead up into the top
      padding; the bottom padding keeps text clear of the footer: 10 mm
      below it, 2.5 mm above its first line, 3.6 mm for each of its lines
-     and 4 mm above it, at least 36 mm. */
+     and 4 mm above it, at least 36 mm. The print page's script raises
+     --inv-footer-lines when the footer prints taller than counted. */
   padding: 20mm 20mm 36mm 25mm;
   padding-bottom: max(36mm, calc(16.5mm + var(--inv-footer-lines, 0) * 3.6mm));
   background: #fff;
@@ -162,6 +165,15 @@
   font-feature-settings: normal;
   font-synthesis: none;
   text-rendering: geometricPrecision;
+  /* The rest of the font settings, so none comes from the page around. */
+  font-stretch: normal;
+  font-variant-caps: normal;
+  font-variant-numeric: normal;
+  font-variant-east-asian: normal;
+  font-variant-position: normal;
+  font-size-adjust: none;
+  font-optical-sizing: auto;
+  font-variation-settings: normal;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   -webkit-print-color-adjust: exact;
@@ -430,11 +442,13 @@
    second time directly in <body> (inv-page-*), see the print rules below, so
    they carry their own font settings instead of inheriting from the sheet. */
 
-/* Tax number and bank details at the bottom of the page. */
+/* Tax number and bank details at the bottom of the page. 165 mm wide also as
+   the copy the print page prints, which is placed on the page and not in
+   the sheet: Chromium's printed page is slightly narrower than 210 mm. */
 .inv-footer {
   position: absolute;
   left: 25mm;
-  right: 20mm;
+  width: 165mm;
   bottom: 10mm;
   display: block;
   box-sizing: border-box;
@@ -462,6 +476,14 @@
   font-feature-settings: normal;
   font-synthesis: none;
   text-rendering: geometricPrecision;
+  font-stretch: normal;
+  font-variant-caps: normal;
+  font-variant-numeric: normal;
+  font-variant-east-asian: normal;
+  font-variant-position: normal;
+  font-size-adjust: none;
+  font-optical-sizing: auto;
+  font-variation-settings: normal;
 }
 
 /* ENTWURF / STORNIERT across the page; never takes a click. */
@@ -529,6 +551,21 @@
 .inv-toolbar-hint {
   color: #525252;
   font-size: 13px;
+}
+
+/* Shown by the print page's script when this browser sets the letter wider
+   than LetterLayout counts. */
+.inv-toolbar-warning {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #78350f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inv-toolbar-warning[hidden] {
+  display: none;
 }
 
 .inv-button {

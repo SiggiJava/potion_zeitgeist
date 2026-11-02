@@ -68,6 +68,10 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
              "Donaudampfschifffahrt"
 
     assert LetterLayout.clean(nil) == ""
+
+    # Bytes that are not UTF-8 become the replacement character.
+    assert LetterLayout.clean(<<"Kunde ", 0xFF>>) == "Kunde \uFFFD"
+    assert LetterLayout.printed_lines(<<"Kunde ", 0xFF, " GmbH">>, :recipient) == 1
   end
 
   test "refuses characters the invoice font does not have" do
@@ -85,6 +89,15 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
              {:error, "has characters the invoice font does not have: U+FE0F U+20E3"}
 
     assert LetterLayout.check("Hans-Böckler-Straße 1 – Hinterhaus\nŁódź", :recipient) == :ok
+
+    assert LetterLayout.check(<<"Kunde ", 0xFF>>, :recipient) ==
+             {:error, "has characters the invoice font does not have: \uFFFD"}
+
+    assert LetterLayout.check_characters("2026-001 ✓") ==
+             {:error, "has characters the invoice font does not have: ✓"}
+
+    assert LetterLayout.check_characters("RE-2026-001") == :ok
+    assert LetterLayout.check_characters(nil) == :ok
   end
 
   test "names the lines that are too long" do
@@ -112,6 +125,11 @@ defmodule PotionZeitgeist.Invoicing.LetterLayoutTest do
     typed = Enum.join(["A", "{{firma}}", "B", "C", "D", "E", "F"], "\n")
 
     assert LetterLayout.check(typed, :sender) == :ok
+
+    # A line break at the end of a filled in value does not print, as the
+    # letter prints its texts trimmed.
+    address = &String.replace(&1, "{{empfaenger}}", "B\r\nC\r\nD\r\nE\r\nF\r\nG\r\n")
+    assert LetterLayout.check("A\n{{empfaenger}}", :sender, address) == :ok
 
     assert LetterLayout.check(typed, :sender, fill) ==
              {:error,

@@ -33,7 +33,12 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
 
   def letter(assigns) do
     ~H"""
-    <div id={@id} class="inv-document" style={"--inv-footer-lines: #{footer_lines(@letter)}"}>
+    <div
+      id={@id}
+      class="inv-document"
+      style={"--inv-footer-lines: #{footer_lines(@letter)}"}
+      data-footer-lines={footer_lines(@letter)}
+    >
       {if @style, do: invoice_style()}
       <p class="inv-print-hint">
         Invoices print from their print view: open the invoice and choose "Print / PDF".
@@ -42,14 +47,28 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
         <.watermark :if={@letter.watermark} text={@letter.watermark} />
 
         <div class="inv-head">
-          <div class="inv-sender inv-pre" phx-no-format>{@letter.sender}</div>
+          <div
+            class="inv-sender inv-pre"
+            data-lines={allowed_lines(@letter.sender, :sender)}
+            phx-no-format
+          >{@letter.sender}</div>
 
           <div class="inv-head-row">
             <div class="inv-address">
               <div class="inv-return-zone">
-                <div :if={@letter.sender_line != ""} class="inv-return">{@letter.sender_line}</div>
+                <div
+                  :if={@letter.sender_line != ""}
+                  class="inv-return"
+                  data-lines={allowed_lines(@letter.sender_line, :return)}
+                >
+                  {@letter.sender_line}
+                </div>
               </div>
-              <div class="inv-recipient inv-pre" phx-no-format>{@letter.recipient}</div>
+              <div
+                class="inv-recipient inv-pre"
+                data-lines={allowed_lines(@letter.recipient, :recipient)}
+                phx-no-format
+              >{@letter.recipient}</div>
             </div>
 
             <dl class="inv-info">
@@ -162,6 +181,14 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
   @doc """
   The bar above the invoice on the print page, with its own styles and
   script, so it works without app.css and app.js.
+
+  The script also checks the letter as this browser lays it out. The line
+  limits hold for the text widths of `PotionZeitgeist.Invoicing.LetterLayout`;
+  a browser that sets text wider (Windows with font smoothing turned off, a
+  minimum font size in the settings) can print more lines. The sheets then
+  keep the room the footer really takes, and when letterhead, return
+  address or address take more lines than they may (`data-lines`), the
+  toolbar says why the address may miss the envelope window.
   """
   attr :back, :string, required: true, doc: "the path of the invoice page"
 
@@ -189,6 +216,11 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
         <span class="inv-toolbar-hint">
           For a PDF, choose "Save as PDF" in the print dialog and keep the scale at 100 %.
         </span>
+        <span id="inv-layout-warning" class="inv-toolbar-warning" hidden>
+          This browser sets the letter text wider than planned, so the address may not sit in
+          the envelope window. Set the minimum font size in the browser settings to the
+          smallest value and, on Windows, turn on font smoothing (ClearType).
+        </span>
         <button id="print-invoice" type="button" class="inv-button inv-button-primary">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -209,11 +241,47 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
       </div>
     </div>
     <script>
-      document.getElementById("print-invoice").addEventListener("click", function () {
-        // Print with the invoice font, not a fallback that is still loading.
-        var ready = document.fonts ? document.fonts.ready : Promise.resolve();
-        ready.then(function () { window.print(); });
-      });
+      (function () {
+        var mm = 96 / 25.4;
+
+        function fonts() {
+          return document.fonts ? document.fonts.ready : Promise.resolve();
+        }
+
+        // Runs again whenever fonts finish loading, so a layout measured with
+        // a fallback font while the invoice font loads is corrected.
+        function check() {
+          var doc = document.querySelector(".inv-document");
+          if (!doc) return;
+
+          // Room for the footer as this browser prints it: invoice.css keeps
+          // 16.5 mm plus 3.6 mm for each footer line.
+          var footer = doc.querySelector(".inv-sheet .inv-footer");
+          var planned = Number(doc.getAttribute("data-footer-lines"));
+          var needed = footer ? (footer.getBoundingClientRect().height / mm - 2.5) / 3.6 : 0;
+          var lines = needed > planned + 0.25 ? needed.toFixed(2) : String(planned);
+          doc.style.setProperty("--inv-footer-lines", lines);
+
+          var wide = false;
+          doc.querySelectorAll("[data-lines]").forEach(function (box) {
+            var range = document.createRange();
+            range.selectNodeContents(box);
+            var height = range.getBoundingClientRect().height;
+            var count = Math.round(height / parseFloat(getComputedStyle(box).lineHeight));
+            if (count > Number(box.getAttribute("data-lines"))) wide = true;
+          });
+          document.getElementById("inv-layout-warning").hidden = !wide;
+        }
+
+        document.addEventListener("DOMContentLoaded", function () { fonts().then(check); });
+        if (document.fonts) document.fonts.addEventListener("loadingdone", check);
+        window.addEventListener("beforeprint", check);
+
+        document.getElementById("print-invoice").addEventListener("click", function () {
+          // Print with the invoice font, not a fallback that is still loading.
+          fonts().then(function () { check(); window.print(); });
+        });
+      })();
     </script>
     """
   end
@@ -231,6 +299,11 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
     <.watermark :if={@letter.watermark} text={@letter.watermark} class="inv-page-watermark" />
     """
   end
+
+  # The lines a box may print with before what follows moves: its limit, or
+  # more for a text saved before the limits.
+  defp allowed_lines(text, box),
+    do: max(LetterLayout.max_lines(box), LetterLayout.printed_lines(text, box))
 
   # The lines the footer prints with, for the room the sheets keep free for it.
   defp footer_lines(letter) do
