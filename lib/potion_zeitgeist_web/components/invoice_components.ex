@@ -164,10 +164,8 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
 
   defp watermark(assigns) do
     ~H"""
-    <div
-      aria-hidden="true"
-      class="invoice-watermark pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden"
-    >
+    <%!-- Positioned by .invoice-watermark in app.css only, see the note there. --%>
+    <div aria-hidden="true" class="invoice-watermark">
       <span class="-rotate-30 select-none text-[64pt] font-black tracking-widest text-neutral-900/[0.06]">
         {@text}
       </span>

@@ -69,7 +69,10 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     [invoice] = Invoicing.list_invoices()
     assert invoice.status == "draft"
     assert Invoicing.entry_ids(invoice) == [hd(ctx.entries).id]
-    assert has_element?(show, "#invoice-letter", "ENTWURF")
+    assert has_element?(show, "#invoice-letter .invoice-watermark", "ENTWURF")
+    # Only app.css may place the watermark over the sheet: with an outdated
+    # stylesheet a positioning utility made it cover the page's buttons.
+    refute has_element?(show, ".invoice-watermark.absolute")
 
     show |> element("#issue-invoice") |> render_click()
     assert has_element?(show, "#last-issued", "first invoice")
