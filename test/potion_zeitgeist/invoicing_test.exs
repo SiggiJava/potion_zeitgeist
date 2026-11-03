@@ -790,7 +790,55 @@ defmodule PotionZeitgeist.InvoicingTest do
     assert errors_on(changeset) == %{
              footer: [
                "takes 5 lines in the footer, which has room for 4: line 4 is too long for one " <>
-                 "line with its placeholders filled in as in the preview and without a due date"
+                 "line with its placeholders filled in as in the preview of an invoice without a due date"
+             ]
+           }
+  end
+
+  test "template texts fit when each way their blocks can print fits" do
+    lines = "Zeile 1\nZeile 2\nZeile 3\n"
+
+    template = %{
+      "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt",
+      "tax_id" => "Steuernummer: 12/345/67890",
+      "body" => "Text"
+    }
+
+    # One of the two lines prints, so the footer has 4 lines.
+    footer =
+      lines <>
+        "{{#faellig_am}}Zahlbar bis zum {{faellig_am}} ohne Abzug.{{/faellig_am}}\n" <>
+        "{{^faellig_am}}Zahlbar sofort ohne Abzug.{{/faellig_am}}"
+
+    assert {:ok, _template} =
+             Invoicing.create_template(Map.merge(template, %{"name" => "A", "footer" => footer}))
+
+    footer = lines <> "Zeile 4\n{{#faellig_am}}Zahlbar bis zum {{faellig_am}}.{{/faellig_am}}"
+
+    assert {:error, changeset} =
+             Invoicing.create_template(Map.merge(template, %{"name" => "B", "footer" => footer}))
+
+    assert errors_on(changeset) == %{footer: ["has 5 lines, the footer has room for 4"]}
+  end
+
+  test "template texts with VAT blocks must fit on invoices with VAT" do
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "VAT",
+               "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt",
+               "tax_id" =>
+                 "USt-IdNr.: DE123456789 · Steuernummer: 12/345/67890 · Finanzamt Musterstadt",
+               "body" => "Text",
+               "footer" =>
+                 "Zeile 1\nZeile 2\nZeile 3\n" <>
+                   "Inhaber: Max Mustermann{{#ust}} · {{steuernummer}}{{/ust}} · " <>
+                   "Gerichtsstand Musterstadt"
+             })
+
+    assert errors_on(changeset) == %{
+             footer: [
+               "takes 5 lines in the footer, which has room for 4: line 4 is too long for one " <>
+                 "line with its placeholders filled in as in the preview of an invoice with VAT"
              ]
            }
   end

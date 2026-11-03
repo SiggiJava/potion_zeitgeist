@@ -46,23 +46,23 @@ defmodule PotionZeitgeist.Invoicing.InvoiceTemplate do
     end)
   end
 
+  @filled_in " with its placeholders filled in as in the preview"
+
   # Letterhead, tax number line and footer have boxes of a fixed size on the
   # printed invoice. A text must fit as typed and as printed: a placeholder
   # can be longer or shorter than its value, so the texts are also checked
-  # with the values of the preview, with and without a due date, since
-  # blocks can print other text without one. As typed, a text is measured
-  # with the text of all its blocks but without their tags, which never
-  # print. The stored texts are checked too, so a template saved before the
-  # limits existed is fixed with its next save.
+  # with the values of the preview. Blocks can print other text on other
+  # invoices, so the texts are checked as typed for each way their blocks
+  # can print, and filled in with the preview's values with and without a
+  # due date and VAT. The stored texts are checked too, so a template saved
+  # before the limits existed is fixed with its next save.
   defp validate_boxes(changeset, today) do
     template = apply_changes(changeset)
 
     samples =
-      for {due_date?, suffix} <- [{true, ""}, {false, " and without a due date"}] do
-        invoice = Letter.sample_invoice(template, today, due_date: due_date?)
-
-        {invoice, Letter.vars(invoice),
-         " with its placeholders filled in as in the preview" <> suffix}
+      for due_date? <- [true, false], vat? <- [false, true] do
+        invoice = Letter.sample_invoice(template, today, due_date: due_date?, vat: vat?)
+        {invoice, Letter.vars(invoice), @filled_in <> sample_name(due_date?, vat?)}
       end
 
     changeset
@@ -72,22 +72,33 @@ defmodule PotionZeitgeist.Invoicing.InvoiceTemplate do
     |> validate_return_line(samples)
   end
 
+  defp sample_name(true, false), do: ""
+  defp sample_name(true, true), do: " of an invoice with VAT"
+  defp sample_name(false, false), do: " of an invoice without a due date"
+  defp sample_name(false, true), do: " of an invoice with VAT and without a due date"
+
   defp validate_box(changeset, field, samples) do
     text = get_field(changeset, field)
+    typed = text |> Letter.typed_variants() |> first_error(field, "")
 
     filled =
       Enum.find_value(samples, fn {_invoice, vars, filled_in} ->
-        case text |> Letter.fill_lines(vars) |> LetterLayout.check_lines(field) do
-          :ok -> nil
-          {:error, message} -> message <> filled_in
-        end
+        first_error([Letter.fill_lines(text, vars)], field, filled_in)
       end)
 
-    case {LetterLayout.check(text, field, &Letter.without_block_tags/1), filled} do
-      {:ok, nil} -> changeset
-      {{:error, message}, _filled} -> add_error(changeset, field, message)
-      {:ok, message} -> add_error(changeset, field, message)
+    case typed || filled do
+      nil -> changeset
+      message -> add_error(changeset, field, message)
     end
+  end
+
+  defp first_error(variants, field, suffix) do
+    Enum.find_value(variants, fn lines ->
+      case LetterLayout.check_lines(lines, field) do
+        :ok -> nil
+        {:error, message} -> message <> suffix
+      end
+    end)
   end
 
   # The small return address above the recipient is made from the letterhead.

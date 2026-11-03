@@ -62,7 +62,7 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
   end
 
   test "an invoice can leave out the due date", ctx do
-    template_fixture(%{"body" => "{{positionen}}\n\nZahlbar bis zum {{faellig_am}}."})
+    template = template_fixture(%{"body" => "{{positionen}}\n\nZahlbar bis zum {{faellig_am}}."})
     {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/new")
 
     view |> form("#invoice-form", invoice: %{month: "2026-10"}) |> render_change()
@@ -81,6 +81,13 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert has_element?(view, "#remove-due-date")
     refute has_element?(view, "#due-date-gap")
     view |> element("#remove-due-date") |> render_click()
+    assert has_element?(view, "#due-date-gap")
+
+    # Fixed in another tab, the template no longer leaves a gap.
+    body = "{{positionen}}\n\nZahlbar{{#faellig_am}} bis zum {{faellig_am}}{{/faellig_am}}."
+    {:ok, _template} = Invoicing.update_template(template, %{"body" => body})
+    view |> form("#invoice-form", invoice: %{hourly_rate: "80"}) |> render_change()
+    refute has_element?(view, "#due-date-gap")
 
     {:ok, show, _html} =
       view

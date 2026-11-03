@@ -84,18 +84,69 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   `PotionZeitgeist.Invoicing.LetterLayout.check_lines/2`). A filled in
   value can hold line breaks of its own.
   """
-  def fill_lines(text, vars) do
-    for {line, _break, number} <- filled_lines(text || "", vars), do: {line, number}
+  def fill_lines(text, vars), do: numbered(filled_lines(text || "", vars))
+
+  @doc """
+  Like `fill_lines/2`, but with the placeholders as typed: the blocks print
+  or are left out as with `vars`. A placeholder can be longer or shorter
+  than its value, so the line limits are checked both ways.
+  """
+  def typed_lines(text, vars), do: numbered(filled_lines(text || "", %{}, has_value(vars)))
+
+  # Texts with more block names than this are measured as typed with the
+  # text of all their blocks (more lines than any of them prints), instead
+  # of once for each way their blocks can print.
+  @max_variant_names 6
+
+  @doc """
+  The lines of `text` as `typed_lines/2` gives them, once for each way its
+  blocks can print: each block name it uses with and without a value. For
+  checking the line limits of a template, whatever invoice it prints.
+  """
+  def typed_variants(text) do
+    text = text || ""
+    names = @block_tag |> Regex.scan(text) |> Enum.map(&List.last/1) |> Enum.uniq()
+    names = Enum.filter(names, &(&1 in @block_names))
+
+    if length(names) > @max_variant_names do
+      numbered_lines = text |> lines() |> Enum.with_index(1)
+      [for({line, number} <- numbered_lines, do: {without_block_tags(line), number})]
+    else
+      for with_value <- subsets(names) do
+        decide = &if(&1 in @block_names, do: &1 in with_value, else: :unknown)
+        numbered(filled_lines(text, %{}, decide))
+      end
+    end
+  end
+
+  defp subsets(names) do
+    Enum.reduce(names, [[]], fn name, subsets -> subsets ++ Enum.map(subsets, &[name | &1]) end)
+  end
+
+  defp numbered(filled_lines), do: for({line, _break, number} <- filled_lines, do: {line, number})
+
+  # Whether the placeholder `name` has a value in `vars`, `:unknown` for
+  # names that are no placeholders.
+  defp has_value(vars) do
+    fn name ->
+      case Map.fetch(vars, name) do
+        {:ok, value} -> not blank?(value)
+        :error -> :unknown
+      end
+    end
   end
 
   # Each line of `text` filled in, with the line break after it and its
   # number in `text`, without the lines that only held left out blocks.
-  defp filled_lines(text, vars) do
+  # `decide` tells for each block name whether it has a value.
+  defp filled_lines(text, vars), do: filled_lines(text, vars, has_value(vars))
+
+  defp filled_lines(text, vars, decide) do
     @line_break
     |> Regex.split(text, include_captures: true)
     |> with_breaks(1)
     |> Enum.map(fn {line, break, number} ->
-      case fill_blocks(line, vars) do
+      case fill_blocks(line, decide) do
         ^line ->
           {:keep, fill_placeholders(line, vars), break, number}
 
@@ -149,15 +200,12 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   defp blank?(text), do: String.trim(text) == ""
 
-  defp fill_blocks(line, vars) do
+  defp fill_blocks(line, decide) do
     Regex.replace(@block, line, fn whole, kind, name, text ->
-      case Map.fetch(vars, name) do
-        {:ok, value} ->
-          prints? = if kind == "#", do: not blank?(value), else: blank?(value)
-          if prints?, do: fill_blocks(text, vars), else: ""
-
-        :error ->
-          whole
+      case decide.(name) do
+        :unknown -> whole
+        has_value when has_value == (kind == "#") -> fill_blocks(text, decide)
+        _left_out -> ""
       end
     end)
   end
@@ -166,11 +214,7 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     Regex.replace(@placeholder, line, fn whole, name -> Map.get(vars, name, whole) end)
   end
 
-  @doc """
-  `line` as typed, without the tags of its blocks: everything it can print
-  at most, with the placeholders not filled in.
-  """
-  def without_block_tags(line) do
+  defp without_block_tags(line) do
     Regex.replace(@block_tag, line, fn whole, _kind, name ->
       if name in @block_names, do: "", else: whole
     end)
@@ -275,8 +319,19 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       "netto" => if(vat?, do: Format.money(totals.net), else: ""),
       "ust_satz" => if(vat?, do: Format.percent(invoice.vat_rate), else: ""),
       "ust" => if(vat?, do: Format.money(totals.vat), else: ""),
-      "steuernummer" => texts.tax_id || ""
+      "steuernummer" => tax_id_value(texts, invoice)
     }
+  end
+
+  # The tax number line as {{steuernummer}} prints it. With blocks (such as
+  # a VAT number only on invoices with VAT), as the tax number line prints;
+  # without, as typed, as before blocks existed.
+  defp tax_id_value(%{tax_id: nil}, _invoice), do: ""
+
+  defp tax_id_value(%{tax_id: tax_id} = texts, invoice) do
+    if Regex.match?(@block_tag, tax_id),
+      do: fill(tax_id, vars(invoice, %{texts | tax_id: ""})),
+      else: tax_id
   end
 
   @doc """
@@ -356,7 +411,8 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   @doc """
   The letter of `template` filled with sample data, for the template preview.
-  With `due_date: false`, the sample invoice has no due date.
+  With `due_date: false`, the sample invoice has no due date, with
+  `vat: true` it charges 19 % VAT.
   """
   def sample(template, today, opts \\ []),
     do: template |> sample_invoice(today, opts) |> build()
@@ -385,7 +441,8 @@ defmodule PotionZeitgeist.Invoicing.Letter do
         }
       end)
 
-    totals = Calculation.totals(items, 0)
+    vat_rate = if Keyword.get(opts, :vat, false), do: Decimal.new(19), else: Decimal.new(0)
+    totals = Calculation.totals(items, vat_rate)
 
     %Invoice{
       status: "issued",
@@ -395,8 +452,8 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       period_start: Date.beginning_of_month(previous),
       period_end: previous,
       recipient: "Beispiel GmbH\nFrau Erika Musterfrau\nHauptstraße 5\n10115 Berlin",
-      tax_mode: "small_business",
-      vat_rate: Decimal.new(0),
+      tax_mode: if(Decimal.gt?(vat_rate, 0), do: "standard", else: "small_business"),
+      vat_rate: vat_rate,
       net_total: totals.net,
       vat_total: totals.vat,
       gross_total: totals.gross,

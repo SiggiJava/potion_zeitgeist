@@ -318,14 +318,21 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   defp due_date?(params), do: params["due_date"] not in [nil, ""]
 
   # Without a due date, a template that prints {{faellig_am}} outside its
-  # block leaves a gap in the letter.
+  # block leaves a gap in the letter. The template is the one the select
+  # shows (its first one when none is picked), read again, as it may have
+  # been fixed in another tab since.
   defp due_date_gap(params, templates) do
-    template = Enum.find(templates, &(to_string(&1.id) == params["template_id"]))
+    shown =
+      Enum.find(templates, List.first(templates), &(to_string(&1.id) == params["template_id"]))
 
-    if template && not due_date?(params) do
+    with false <- due_date?(params),
+         %{id: id} <- shown,
+         %{} = template <- Invoicing.get_template(id) do
       template
       |> Map.take([:sender, :tax_id, :subject, :body, :footer])
       |> Invoicing.due_date_gap()
+    else
+      _ -> nil
     end
   end
 

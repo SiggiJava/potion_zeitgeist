@@ -35,6 +35,9 @@ defmodule PotionZeitgeist.Invoicing do
 
   def get_template!(id), do: Repo.get!(InvoiceTemplate, id)
 
+  @doc "Like `get_template!/1`, but `nil` when the template does not exist (any more)."
+  def get_template(id), do: Repo.get(InvoiceTemplate, id)
+
   # The template functions take the date of the sample letter that texts are
   # measured with, see `InvoiceTemplate.changeset/3`; the form passes the
   # date of its preview.
@@ -837,8 +840,8 @@ defmodule PotionZeitgeist.Invoicing do
 
   # A text that fits as typed but not with the values of this invoice says
   # so, since the cause can be a value such as the number of the form. The
-  # recipient has no placeholders (`vars` nil). As typed, blocks count with
-  # their text but without their tags, see `InvoiceTemplate`.
+  # recipient has no placeholders (`vars` nil). Both ways, blocks print as
+  # on this invoice.
   defp layout_message(text, box, nil) do
     case LetterLayout.check(text, box) do
       {:error, message} -> " " <> message
@@ -847,7 +850,7 @@ defmodule PotionZeitgeist.Invoicing do
   end
 
   defp layout_message(text, box, vars) do
-    case {LetterLayout.check(text, box, &Letter.without_block_tags/1),
+    case {text |> Letter.typed_lines(vars) |> LetterLayout.check_lines(box),
           text |> Letter.fill_lines(vars) |> LetterLayout.check_lines(box)} do
       {{:error, message}, _filled} -> " " <> message
       {:ok, {:error, message}} -> ", with its placeholders filled in, " <> message

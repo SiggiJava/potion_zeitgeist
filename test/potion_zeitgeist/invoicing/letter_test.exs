@@ -65,12 +65,20 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
                [{"A", 1}, {"Zahlbar sofort.", 2}, {"B ", 3}]
     end
 
-    test "are measured as typed without their tags" do
-      assert Letter.without_block_tags("A{{#faellig_am}} bis {{faellig_am}}{{/faellig_am}}") ==
-               "A bis {{faellig_am}}"
+    test "are measured as typed once for each way they can print" do
+      text =
+        "A{{#faellig_am}} bis {{faellig_am}}{{/faellig_am}}\n{{^faellig_am}}Sofort.{{/faellig_am}}"
 
-      assert Letter.without_block_tags("{{#tippfehler}}a{{/tippfehler}}") ==
-               "{{#tippfehler}}a{{/tippfehler}}"
+      assert Letter.typed_lines(text, @with_due_date) == [{"A bis {{faellig_am}}", 1}]
+      assert Letter.typed_lines(text, @without_due_date) == [{"A", 1}, {"Sofort.", 2}]
+
+      assert Letter.typed_variants(text) == [
+               [{"A", 1}, {"Sofort.", 2}],
+               [{"A bis {{faellig_am}}", 1}]
+             ]
+
+      assert Letter.typed_variants("{{#tippfehler}}a{{/tippfehler}} {{rechnungsnummer}}") ==
+               [[{"{{#tippfehler}}a{{/tippfehler}} {{rechnungsnummer}}", 1}]]
     end
 
     test "must open and close on one line" do
@@ -181,6 +189,30 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
 
     assert letter.after_items ==
              "Summe 170,00 €.\n\nZahlbar sofort ohne Abzug.\n\nMit freundlichen Grüßen"
+  end
+
+  test "the tax number line prints its blocks also where {{steuernummer}} is used" do
+    invoice =
+      issued_invoice(%{
+        letter_tax_id: "Steuernummer: 12/345/67890{{#ust}} · USt-IdNr.: DE123456789{{/ust}}",
+        letter_footer: "IBAN DE12 · {{steuernummer}}"
+      })
+
+    letter = Letter.build(invoice)
+    assert letter.tax_id == "Steuernummer: 12/345/67890"
+    assert letter.footer == "IBAN DE12 · Steuernummer: 12/345/67890"
+
+    letter =
+      Letter.build(%{
+        invoice
+        | tax_mode: "standard",
+          vat_rate: Decimal.new("19"),
+          vat_total: Decimal.new("32.30"),
+          gross_total: Decimal.new("202.30")
+      })
+
+    assert letter.tax_id == "Steuernummer: 12/345/67890 · USt-IdNr.: DE123456789"
+    assert letter.footer == "IBAN DE12 · Steuernummer: 12/345/67890 · USt-IdNr.: DE123456789"
   end
 
   test "the sample template names the due date only when there is one" do
