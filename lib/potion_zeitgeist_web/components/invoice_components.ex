@@ -86,37 +86,68 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
         <div :if={@letter.before_items != ""} class="inv-text inv-pre" phx-no-format>{@letter.before_items}</div>
 
         <table class="inv-table inv-items">
-          <colgroup>
-            <col class="inv-col-pos" />
-            <col />
-            <col class="inv-col-hours" />
-            <col class="inv-col-rate" />
-            <col class="inv-col-amount" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Pos.</th>
-              <th>Leistung</th>
-              <th class="inv-num">Std.</th>
-              <th class="inv-num">Stundensatz</th>
-              <th class="inv-num">Betrag</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr :for={item <- @letter.items}>
-              <td>{item.position}</td>
-              <td>{item.description}</td>
-              <td class="inv-num">{item.hours}</td>
-              <td class="inv-num">{item.rate}</td>
-              <td class="inv-num">{item.amount}</td>
-            </tr>
-          </tbody>
+          <%= if @letter.item_columns == :quantity do %>
+            <colgroup>
+              <col class="inv-col-pos" />
+              <col />
+              <col class="inv-col-quantity" />
+              <col class="inv-col-unit" />
+              <col class="inv-col-rate" />
+              <col class="inv-col-amount" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Pos.</th>
+                <th>Bezeichnung</th>
+                <th class="inv-num">Menge</th>
+                <th>Einheit</th>
+                <th class="inv-num">Einzelpreis</th>
+                <th class="inv-num">Betrag</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr :for={item <- @letter.items}>
+                <td>{item.position}</td>
+                <td>{item.description}</td>
+                <td class="inv-num">{item.quantity}</td>
+                <td class="inv-nowrap">{item.unit}</td>
+                <td class="inv-num">{item.price}</td>
+                <td class="inv-num">{item.amount}</td>
+              </tr>
+            </tbody>
+          <% else %>
+            <colgroup>
+              <col class="inv-col-pos" />
+              <col />
+              <col class="inv-col-hours" />
+              <col class="inv-col-rate" />
+              <col class="inv-col-amount" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Pos.</th>
+                <th>Leistung</th>
+                <th class="inv-num">Std.</th>
+                <th class="inv-num">Stundensatz</th>
+                <th class="inv-num">Betrag</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr :for={item <- @letter.items}>
+                <td>{item.position}</td>
+                <td>{item.description}</td>
+                <td class="inv-num">{item.hours}</td>
+                <td class="inv-num">{item.rate}</td>
+                <td class="inv-num">{item.amount}</td>
+              </tr>
+            </tbody>
+          <% end %>
           <tfoot>
             <tr
               :for={{{label, value}, index} <- Enum.with_index(@letter.totals)}
               class={index == length(@letter.totals) - 1 && "inv-total"}
             >
-              <td colspan="4" class="inv-num">{label}</td>
+              <td colspan={total_colspan(@letter)} class="inv-num">{label}</td>
               <td class="inv-num">{value}</td>
             </tr>
           </tfoot>
@@ -325,6 +356,10 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
     <.watermark :if={@letter.watermark} text={@letter.watermark} class="inv-page-watermark" />
     """
   end
+
+  # The totals span the columns before the amount.
+  defp total_colspan(%{item_columns: :quantity}), do: "5"
+  defp total_colspan(_letter), do: "4"
 
   # The lines a box may print with before what follows moves: its limit, or
   # more for a text saved before the limits.

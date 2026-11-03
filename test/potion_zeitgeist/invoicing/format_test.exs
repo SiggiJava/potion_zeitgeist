@@ -18,6 +18,15 @@ defmodule PotionZeitgeist.Invoicing.FormatTest do
     assert Format.duration(0) == "0:00"
   end
 
+  test "quantities with as many decimals as they have" do
+    assert Format.quantity(Decimal.new("2.500")) == "2,5"
+    assert Format.quantity(Decimal.new("1250.000")) == "1.250"
+    assert Format.quantity(Decimal.new("0.125")) == "0,125"
+    assert Format.quantity(Decimal.new("99999.999")) == "99.999,999"
+    assert Format.quantity(Decimal.new(3)) == "3"
+    assert Format.quantity(nil) == ""
+  end
+
   test "dates, months and periods" do
     assert Format.date(~D[2026-10-01]) == "01.10.2026"
     assert Format.month(~D[2026-03-01]) == "März 2026"

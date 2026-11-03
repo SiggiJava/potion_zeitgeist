@@ -1,12 +1,14 @@
 defmodule PotionZeitgeist.Invoicing.Calculation do
   @moduledoc """
-  Turns selected time entries into invoice items and totals.
+  Turns selected time entries into invoice items, and items into totals.
 
   Each entry counts with its duration rounded to full minutes, so the time
   sheet rows add up to the item. Entries are grouped by project, each group is
   billed in hours rounded to two decimals, and the amount is computed from
   those rounded hours, so "hours × rate = amount" checks out on paper.
   """
+
+  alias PotionZeitgeist.Invoicing.InvoiceItem
 
   @no_project_description "Dienstleistungen"
 
@@ -56,6 +58,7 @@ defmodule PotionZeitgeist.Invoicing.Calculation do
       hours = hours(group.minutes)
 
       %{
+        kind: "time",
         key: group.key,
         position: position,
         project_id: group.project_id,
@@ -70,7 +73,8 @@ defmodule PotionZeitgeist.Invoicing.Calculation do
 
   @doc """
   Net, VAT and gross totals for items, with `vat_rate` in percent.
-  Items without an amount (missing rate) count as zero.
+  Items without an amount (missing rate) count as zero. Minutes and hours
+  are those of the items that bill time entries.
   """
   def totals(items, vat_rate) do
     net =
@@ -85,9 +89,12 @@ defmodule PotionZeitgeist.Invoicing.Calculation do
       |> Decimal.div(100)
       |> Decimal.round(2, :half_up)
 
+    time_items = Enum.filter(items, &InvoiceItem.time?/1)
+
     %{
-      minutes: items |> Enum.map(& &1.minutes) |> Enum.sum(),
-      hours: items |> Enum.map(& &1.hours) |> Enum.reduce(Decimal.new("0.00"), &Decimal.add/2),
+      minutes: time_items |> Enum.map(& &1.minutes) |> Enum.sum(),
+      hours:
+        time_items |> Enum.map(& &1.hours) |> Enum.reduce(Decimal.new("0.00"), &Decimal.add/2),
       net: net,
       vat: vat,
       gross: Decimal.add(net, vat)
@@ -99,8 +106,9 @@ defmodule PotionZeitgeist.Invoicing.Calculation do
     minutes |> Decimal.new() |> Decimal.div(60) |> Decimal.round(2, :half_up)
   end
 
-  def amount(hours, rate) do
-    hours |> Decimal.mult(rate) |> Decimal.round(2, :half_up)
+  @doc "Quantity (or hours) times price (or rate), rounded to cents."
+  def amount(quantity, price) do
+    quantity |> Decimal.mult(price) |> Decimal.round(2, :half_up)
   end
 
   @doc "Hourly and VAT rates are stored with two decimals."

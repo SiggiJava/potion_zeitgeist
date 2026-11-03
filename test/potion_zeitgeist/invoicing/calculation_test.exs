@@ -97,4 +97,17 @@ defmodule PotionZeitgeist.Invoicing.CalculationTest do
     assert Decimal.equal?(totals.vat, 0)
     assert Decimal.equal?(totals.gross, Decimal.new("127.55"))
   end
+
+  test "other items count for the amounts, but not for the hours" do
+    items = [
+      %{kind: "time", minutes: 60, hours: Decimal.new("1.00"), amount: Decimal.new("85.00")},
+      %{kind: "manual", minutes: nil, hours: nil, amount: Decimal.new("15.00")}
+    ]
+
+    totals = Calculation.totals(items, Decimal.new("19"))
+    assert totals.minutes == 60
+    assert Decimal.equal?(totals.hours, Decimal.new("1.00"))
+    assert Decimal.equal?(totals.net, Decimal.new("100.00"))
+    assert Decimal.equal?(totals.gross, Decimal.new("119.00"))
+  end
 end

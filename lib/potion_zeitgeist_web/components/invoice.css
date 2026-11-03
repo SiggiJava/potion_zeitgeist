@@ -405,6 +405,19 @@
   width: 33mm;
 }
 
+/* An invoice with other items than time (material, flat fees) shows
+   quantity, unit and price per unit instead of hours and rate. The quantity
+   column holds the largest quantity the app accepts (99.999,999), the unit
+   column the widest unit it accepts: 17 mm of text, as measured by
+   PotionZeitgeist.Invoicing.LetterLayout (box :unit). */
+.inv-col-quantity {
+  width: 21.5mm;
+}
+
+.inv-col-unit {
+  width: 19mm;
+}
+
 .inv-timesheet {
   font-size: 9pt;
 }

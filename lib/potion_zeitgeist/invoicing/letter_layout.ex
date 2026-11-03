@@ -47,7 +47,11 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     tax_id: %{width_mm: 165, size_pt: 7.5, lines: 1, name: "the footer"},
     # The return address in small print above the recipient, made from the
     # letterhead by `PotionZeitgeist.Invoicing.Letter.build/2`.
-    return: %{width_mm: 80, size_pt: 7, lines: 4, name: "the return address line"}
+    return: %{width_mm: 80, size_pt: 7, lines: 4, name: "the return address line"},
+    # The unit of an item entered on the invoice form (see
+    # `PotionZeitgeist.Invoicing.ManualItem`) in the table of items: the
+    # 19 mm unit column less its 2 mm padding.
+    unit: %{width_mm: 17, size_pt: 9.5, lines: 1, name: "the unit column"}
   }
 
   @metrics_path Path.expand("../../../priv/invoice_font/metrics.txt", __DIR__)
@@ -109,8 +113,8 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   @word_start [nil, 0x00A0, 0x2007, 0x202F]
 
   @doc """
-  How many lines `box` holds: `:sender`, `:recipient`, `:footer`, `:tax_id`
-  or `:return`.
+  How many lines `box` holds: `:sender`, `:recipient`, `:footer`, `:tax_id`,
+  `:return` or `:unit`.
   """
   def max_lines(box), do: Map.fetch!(@boxes, box).lines
 

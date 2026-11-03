@@ -174,6 +174,102 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
     assert [%{hours: "2,00", rate: "85,00 €", amount: "170,00 €"}] = letter.items
   end
 
+  test "an invoice of time only keeps its columns of hours and hourly rate" do
+    letter = Letter.build(issued_invoice(%{}))
+
+    assert letter.item_columns == :hours
+    assert [%{position: 1, hours: "2,00", rate: "85,00 €"} = row] = letter.items
+    refute Map.has_key?(row, :quantity)
+  end
+
+  test "other items print with quantity, unit and price per unit, time in hours" do
+    invoice =
+      issued_invoice(%{
+        items: [
+          %{
+            kind: "time",
+            position: 1,
+            description: "Website",
+            minutes: 120,
+            hours: Decimal.new("2.00"),
+            hourly_rate: Decimal.new("85.00"),
+            amount: Decimal.new("170.00")
+          },
+          %{
+            kind: "manual",
+            position: 2,
+            description: "Netzwerkkabel",
+            quantity: Decimal.new("1250.500"),
+            unit: "m",
+            unit_price: Decimal.new("0.40"),
+            amount: Decimal.new("500.20")
+          },
+          %{
+            kind: "manual",
+            position: 3,
+            description: "Einrichtung",
+            quantity: Decimal.new("1.000"),
+            unit: nil,
+            unit_price: Decimal.new("99.00"),
+            amount: Decimal.new("99.00")
+          }
+        ],
+        net_total: Decimal.new("769.20"),
+        gross_total: Decimal.new("769.20"),
+        letter_body: "{{positionen}}\n{{stunden}} Stunden, {{gesamtbetrag}}"
+      })
+
+    letter = Letter.build(invoice)
+    assert letter.item_columns == :quantity
+
+    assert [
+             %{position: 1, quantity: "2,00", unit: "Std.", price: "85,00 €", amount: "170,00 €"},
+             %{
+               position: 2,
+               description: "Netzwerkkabel",
+               quantity: "1.250,5",
+               unit: "m",
+               price: "0,40 €",
+               amount: "500,20 €"
+             },
+             %{position: 3, quantity: "1", unit: "", price: "99,00 €"}
+           ] = letter.items
+
+    # {{stunden}} are the hours of the time entries.
+    assert letter.after_items == "2,00 Stunden, 769,20 €"
+    assert letter.totals == [{"Gesamtbetrag", "769,20 €"}]
+  end
+
+  test "{{stunden}} is empty on an invoice of other items only, so a block can leave it out" do
+    body = "{{positionen}}\n{{#stunden}}{{stunden}} Stunden, {{/stunden}}{{gesamtbetrag}}"
+
+    items = [
+      %{
+        kind: "manual",
+        position: 1,
+        description: "Einrichtung",
+        quantity: Decimal.new("1.000"),
+        unit: "Pauschale",
+        unit_price: Decimal.new("99.00"),
+        amount: Decimal.new("99.00")
+      }
+    ]
+
+    invoice =
+      issued_invoice(%{
+        items: items,
+        net_total: Decimal.new("99.00"),
+        gross_total: Decimal.new("99.00"),
+        letter_body: body
+      })
+
+    assert Letter.vars(invoice)["stunden"] == ""
+    assert Letter.build(invoice).after_items == "99,00 €"
+
+    assert Letter.build(issued_invoice(%{letter_body: body})).after_items ==
+             "2,00 Stunden, 170,00 €"
+  end
+
   test "an invoice without a due date prints none" do
     body =
       "Leistungen {{monat}}:\n{{positionen}}\n\n" <>

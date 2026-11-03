@@ -1,16 +1,20 @@
 defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   @moduledoc """
   Creates and edits invoice drafts: pick a month, select its unbilled time
-  entries, enter one hourly rate or one per project, and see the amount.
+  entries, enter one hourly rate or one per project, add other items such
+  as material, and see the amount.
 
   The form works on plain params (not a changeset) because the selection,
-  rates and descriptions are not fields of the invoice. Errors of the last
-  save are shown through `to_form/2`'s `:errors`.
+  rates, descriptions and other items are not fields of the invoice. Errors
+  of the last save are shown through `to_form/2`'s `:errors`.
+
+  The other items are rows the page adds and removes itself, each with an
+  id of its own, see `merge_manual_items/2`.
   """
   use PotionZeitgeistWeb, :live_view
 
   alias PotionZeitgeist.Invoicing
-  alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice}
+  alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice, ManualItem}
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
 
@@ -50,9 +54,11 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
         nil ->
           {params, []}
 
-        # A corrected invoice bills the same month and entries again.
+        # A corrected invoice bills the same month, entries and other items again.
         %Invoice{status: "cancelled"} ->
-          {Map.put(params, "month", Invoicing.month_param(base.period_start)),
+          {params
+           |> Map.put("month", Invoicing.month_param(base.period_start))
+           |> Map.put("manual_items", Invoicing.manual_item_rows(base)),
            Invoicing.entry_ids(base)}
 
         _ ->
@@ -116,6 +122,46 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
      |> assign(:params, Map.put(socket.assigns.params, "due_date", ""))
      |> assign(:errors, Keyword.delete(socket.assigns.errors, :due_date))
      |> refresh()}
+  end
+
+  # After a reconnect the browser sends the form as it was to a freshly
+  # mounted page, which does not know the rows of other items added or
+  # removed before, so they are taken over as sent. A row whose id repeats
+  # one before it gets an id of its own, so that typing into it or
+  # removing it never changes the other row.
+  @impl true
+  def handle_event("recover", %{"invoice" => incoming}, socket) when is_map(incoming) do
+    {rows, _ids} =
+      incoming
+      |> ManualItem.rows()
+      |> Enum.map(&recovered_row/1)
+      |> Enum.map_reduce(MapSet.new(), fn row, ids ->
+        row =
+          if MapSet.member?(ids, row["id"]),
+            do: ManualItem.new_row(Map.take(row, ManualItem.fields())),
+            else: row
+
+        {row, MapSet.put(ids, row["id"])}
+      end)
+
+    socket = put_manual_rows(socket, rows)
+    others = Map.delete(incoming, "manual_items")
+
+    {:noreply, socket |> apply_params(others, nil) |> assign(:errors, []) |> refresh()}
+  end
+
+  def handle_event("recover", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("add_manual_item", _params, socket) do
+    rows = manual_rows(socket) ++ [ManualItem.new_row()]
+    {:noreply, socket |> put_manual_rows(rows) |> refresh()}
+  end
+
+  @impl true
+  def handle_event("remove_manual_item", %{"id" => id}, socket) do
+    rows = Enum.reject(manual_rows(socket), &(&1["id"] == id))
+    {:noreply, socket |> put_manual_rows(rows) |> refresh()}
   end
 
   @impl true
@@ -204,12 +250,13 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
     params =
       old
-      |> Map.merge(Map.drop(incoming, ["rates", "descriptions", "entry_ids"]))
+      |> Map.merge(Map.drop(incoming, ["rates", "descriptions", "entry_ids", "manual_items"]))
       |> Map.put("rates", Map.merge(old["rates"] || %{}, drop_unused(incoming["rates"])))
       |> Map.put(
         "descriptions",
         Map.merge(old["descriptions"] || %{}, drop_unused(incoming["descriptions"]))
       )
+      |> Map.put("manual_items", merge_manual_items(old["manual_items"] || [], incoming))
 
     month = Invoicing.parse_month(params["month"]) || socket.assigns.month
     base_id = params["base_id"]
@@ -255,6 +302,33 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   end
 
   defp drop_unused(_params), do: %{}
+
+  # Typed values only update the rows of other items the page has, found by
+  # their ids: a row added a moment ago stays when the browser sends the
+  # form from before it was added, and a row removed a moment ago stays
+  # removed when the browser sends it once more.
+  defp merge_manual_items(rows, incoming) do
+    typed =
+      incoming
+      |> ManualItem.rows()
+      |> Map.new(fn row -> {row["id"], row |> drop_unused() |> Map.take(ManualItem.fields())} end)
+
+    Enum.map(rows, fn row -> Map.merge(row, Map.get(typed, row["id"], %{})) end)
+  end
+
+  defp recovered_row(row) do
+    values = row |> drop_unused() |> Map.take(ManualItem.fields())
+
+    case row["id"] do
+      id when is_binary(id) and id != "" -> values |> ManualItem.new_row() |> Map.put("id", id)
+      _ -> ManualItem.new_row(values)
+    end
+  end
+
+  defp manual_rows(socket), do: socket.assigns.params["manual_items"] || []
+
+  defp put_manual_rows(socket, rows),
+    do: assign(socket, :params, Map.put(socket.assigns.params, "manual_items", rows))
 
   defp load_month(socket, month) do
     entries = Invoicing.billable_entries(month, socket.assigns.invoice)
@@ -303,9 +377,13 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
          }}
       end)
 
+    preview = Invoicing.preview(selected_entries, params)
+
     socket
     |> assign(:group_stats, group_stats)
-    |> assign(:preview, Invoicing.preview(selected_entries, params))
+    |> assign(:preview, preview)
+    |> assign(:item_amounts, item_amounts(preview))
+    |> assign(:show_item_errors?, Keyword.has_key?(errors, :manual_items))
     |> assign(:unselected_count, length(unselected))
     |> assign(
       :unselected_minutes,
@@ -367,6 +445,40 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   defp group_name(%{project_name: nil}), do: "No project"
   defp group_name(%{project_name: name}), do: name
 
+  # The message for `field` of a row of other items. One about a field left
+  # blank only shows after a save, not while the row is being filled in.
+  defp item_errors(preview, row, field, show_all?) do
+    case get_in(preview.manual_errors, [row["id"], field]) do
+      nil -> []
+      message -> if show_all? or row[field] not in [nil, ""], do: [message], else: []
+    end
+  end
+
+  defp item_amount_error(preview, row) do
+    get_in(preview.manual_errors, [row["id"], "amount"])
+  end
+
+  defp summary_quantity(%{kind: "manual"} = item),
+    do: String.trim("#{Format.quantity(item.quantity)} #{item.unit}")
+
+  defp summary_quantity(item), do: "#{Format.hours(item.hours)} h"
+
+  defp summary_price(%{kind: "manual"} = item), do: Format.money(item.unit_price)
+  defp summary_price(%{hourly_rate: nil}), do: "?"
+  defp summary_price(item), do: Format.money(item.hourly_rate)
+
+  # The amounts of the complete rows of other items, by row id.
+  defp item_amounts(preview) do
+    for %{kind: "manual"} = item <- preview.items, into: %{}, do: {item.row_id, item.amount}
+  end
+
+  defp item_amount(amounts, row) do
+    case amounts[row["id"]] do
+      nil -> "–"
+      amount -> Format.money(amount)
+    end
+  end
+
   defp error_message(errors, field) do
     case Keyword.get(errors, field) do
       nil -> nil
@@ -388,7 +500,13 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
         <h1 class="text-2xl font-bold">{@page_title}</h1>
       </div>
 
-      <.form for={@form} id="invoice-form" phx-change="validate" phx-submit="save">
+      <.form
+        for={@form}
+        id="invoice-form"
+        phx-change="validate"
+        phx-submit="save"
+        phx-auto-recover="recover"
+      >
         <input type="hidden" name="invoice[entry_ids][]" value="" />
 
         <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -618,9 +736,119 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
               </div>
             </section>
 
+            <section id="manual-items" class="card bg-base-100 shadow">
+              <div class="card-body gap-3">
+                <h2 class="card-title text-base">3. Other items</h2>
+                <p class="text-sm text-base-content/60 -mt-2">
+                  Material, flat fees and anything else not billed by the hour, with quantity,
+                  unit and price per unit. They print after the time entries.
+                </p>
+
+                <p
+                  :if={error_message(@errors, :manual_items) && @preview.manual_errors != %{}}
+                  id="manual-items-error"
+                  class="text-sm text-error"
+                >
+                  <.icon name="hero-exclamation-circle" class="size-4" />
+                  {error_message(@errors, :manual_items)}
+                </p>
+
+                <div
+                  :for={{row, index} <- Enum.with_index(@params["manual_items"])}
+                  id={row["id"]}
+                  class="rounded-box border border-base-300 px-3 pt-2"
+                >
+                  <input
+                    type="hidden"
+                    name={"invoice[manual_items][#{index}][id]"}
+                    value={row["id"]}
+                  />
+                  <div class="flex items-end gap-2">
+                    <div class="grow min-w-0">
+                      <.input
+                        id={"#{row["id"]}-description"}
+                        name={"invoice[manual_items][#{index}][description]"}
+                        value={row["description"]}
+                        label="Description"
+                        placeholder="e.g. Netzwerkkabel, 5 m"
+                        phx-debounce="300"
+                        errors={item_errors(@preview, row, "description", @show_item_errors?)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      id={"#{row["id"]}-remove"}
+                      phx-click="remove_manual_item"
+                      phx-value-id={row["id"]}
+                      class="btn btn-ghost btn-sm gap-1 mb-3 text-error"
+                      title="Remove this item"
+                    >
+                      <.icon name="hero-trash" class="size-4" /> Remove
+                    </button>
+                  </div>
+                  <div class="grid gap-x-4 sm:grid-cols-4">
+                    <.input
+                      id={"#{row["id"]}-quantity"}
+                      name={"invoice[manual_items][#{index}][quantity]"}
+                      value={row["quantity"]}
+                      label="Quantity"
+                      inputmode="decimal"
+                      placeholder="e.g. 2,5"
+                      phx-debounce="300"
+                      errors={item_errors(@preview, row, "quantity", @show_item_errors?)}
+                    />
+                    <.input
+                      id={"#{row["id"]}-unit"}
+                      name={"invoice[manual_items][#{index}][unit]"}
+                      value={row["unit"]}
+                      label="Unit (optional)"
+                      list="unit-suggestions"
+                      placeholder="e.g. Stk."
+                      phx-debounce="300"
+                      errors={item_errors(@preview, row, "unit", @show_item_errors?)}
+                    />
+                    <.input
+                      id={"#{row["id"]}-unit-price"}
+                      name={"invoice[manual_items][#{index}][unit_price]"}
+                      value={row["unit_price"]}
+                      label="Price per unit (€)"
+                      inputmode="decimal"
+                      placeholder="e.g. 12,50"
+                      phx-debounce="300"
+                      errors={item_errors(@preview, row, "unit_price", @show_item_errors?)}
+                    />
+                    <div class="fieldset mb-2">
+                      <span class="label mb-1">Amount</span>
+                      <span id={"#{row["id"]}-amount"} class="font-mono py-2">
+                        {item_amount(@item_amounts, row)}
+                      </span>
+                      <span :if={item_amount_error(@preview, row)} class="text-sm text-error">
+                        Amount {item_amount_error(@preview, row)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <datalist id="unit-suggestions">
+                  <option :for={unit <- ManualItem.unit_suggestions()} value={unit} />
+                </datalist>
+
+                <div>
+                  <button
+                    type="button"
+                    id="add-manual-item"
+                    phx-click="add_manual_item"
+                    class="btn btn-ghost btn-sm gap-1"
+                  >
+                    <.icon name="hero-plus" class="size-4" /> Add item
+                  </button>
+                </div>
+              </div>
+            </section>
+
             <section class="card bg-base-100 shadow">
               <div class="card-body gap-3">
-                <h2 class="card-title text-base">3. Invoice</h2>
+                <h2 class="card-title text-base">4. Invoice</h2>
                 <.input
                   field={@form[:template_id]}
                   id="invoice-template"
@@ -728,24 +956,30 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                 <h2 class="card-title text-base">Summary</h2>
 
                 <p :if={@preview.items == []} class="text-sm text-base-content/60">
-                  Select time entries to bill.
+                  Select time entries or add other items to bill.
                 </p>
 
                 <ul class="space-y-2">
                   <li :for={item <- @preview.items} class="text-sm">
                     <div class="font-medium">{item.description}</div>
                     <div class="flex justify-between gap-2 text-base-content/70">
-                      <span class="font-mono">
-                        {Format.hours(item.hours)} h × {if item.hourly_rate,
-                          do: Format.money(item.hourly_rate),
-                          else: "?"}
-                      </span>
+                      <span class="font-mono">{summary_quantity(item)} × {summary_price(item)}</span>
                       <span class="font-mono">
                         {if item.amount, do: Format.money(item.amount), else: "rate missing"}
                       </span>
                     </div>
                   </li>
                 </ul>
+
+                <p
+                  :if={@preview.manual_errors != %{}}
+                  id="incomplete-items-hint"
+                  class="text-xs text-warning"
+                >
+                  {map_size(@preview.manual_errors)} other {if map_size(@preview.manual_errors) == 1,
+                    do: "item is",
+                    else: "items are"} not complete yet and not counted.
+                </p>
 
                 <div class="border-t border-base-300 pt-2 space-y-1 text-sm">
                   <%= if @preview.tax_mode == "standard" do %>
