@@ -1,12 +1,31 @@
-_build/
-deps/
-.git/
-.elixir_ls/
-priv/static/assets/
-priv/static/cache_manifest.json
-assets/node_modules/
+# Keeps the Docker build context small and free of local or secret files.
+# The image builds its own dependencies, assets and release.
+
+.git
+.github
+.elixir_ls
 .env
-cover/
-doc/
-tmp/
+.env.*
+secrets.env*
+*.dump
 *.md
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Mix artifacts and dependencies
+/_build/
+/deps/
+*.ez
+erl_crash.dump
+
+# Development and test files
+/cover/
+/doc/
+/test/
+/tmp/
+
+# Built inside the image
+/assets/node_modules/
+/priv/static/assets/
+/priv/static/cache_manifest.json

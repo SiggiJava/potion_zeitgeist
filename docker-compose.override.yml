@@ -1,0 +1,9 @@
+# Docker Compose reads this file automatically next to docker-compose.yml.
+# In a clone of the repository it lets the app image be built from the source:
+#
+#   docker compose up -d --build
+#
+# Installations that only use the published image don't need this file.
+services:
+  app:
+    build: .

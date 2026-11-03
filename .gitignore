@@ -38,3 +38,7 @@ npm-debug.log
 # Local environment variables — never commit secrets.
 .env
 
+# Backups made with the commands in the README (keys and database dumps).
+secrets.env
+secrets.env.*
+*.dump

@@ -1,35 +1,63 @@
+# Potion Zeitgeist with its own PostgreSQL database.
+#
+#   Start:   docker compose up -d            then open http://localhost:4000
+#   Update:  docker compose pull && docker compose up -d
+#
+# This file is all another installation needs; settings go into an optional
+# .env file next to it (see .env.example). All data lives in the two named
+# volumes at the bottom. Updating, restarting or recreating the containers
+# keeps them. Only `docker compose down -v` or `docker volume rm` deletes them.
+#
+# In a clone of the repository, docker-compose.override.yml is picked up as
+# well, and `docker compose up -d --build` builds the image from the source.
+
+# A fixed project name: the containers and the volumes
+# potion_zeitgeist_postgres_data and potion_zeitgeist_app_data keep their
+# names when this file is moved to another folder, so the same installation
+# is found again. A second, separate installation on the same computer needs
+# its own name: COMPOSE_PROJECT_NAME=<other name> in its .env.
+name: potion_zeitgeist
+
 services:
   db:
+    # Stay on PostgreSQL 16: a newer major version cannot open this data
+    # volume without a dump and restore (see README, "Docker").
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # Only used when the volume is created for the first time.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: potion_zeitgeist_prod
     volumes:
-      # Named volume keeps data across container rebuilds and updates
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      # Over TCP: the temporary server of the first initialisation only
+      # listens on the socket and must not count as ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d potion_zeitgeist_prod"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   app:
-    build: .
+    image: ghcr.io/siggijava/potion_zeitgeist:${APP_VERSION:-latest}
     ports:
-      - "4000:4000"
+      - "${APP_PORT:-4000}:4000"
     environment:
-      DATABASE_URL: ecto://postgres:postgres@db/potion_zeitgeist_prod
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
-      VAULT_KEY: ${VAULT_KEY}
+      DATABASE_URL: ecto://postgres:${POSTGRES_PASSWORD:-postgres}@db/potion_zeitgeist_prod
+      # Empty means: use the keys generated on first start (app_data volume).
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-}
+      VAULT_KEY: ${VAULT_KEY:-}
       PHX_HOST: ${PHX_HOST:-localhost}
-      PORT: "4000"
+      FORCE_SSL: ${FORCE_SSL:-false}
+    volumes:
+      - app_data:/app/data
     depends_on:
       db:
         condition: service_healthy
+    init: true
     restart: unless-stopped
 
 volumes:
-  # Persists database data independently of the app container lifecycle
   postgres_data:
+  app_data:
