@@ -69,10 +69,14 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     [invoice] = Invoicing.list_invoices()
     assert invoice.status == "draft"
     assert Invoicing.entry_ids(invoice) == [hd(ctx.entries).id]
-    assert has_element?(show, "#invoice-letter .invoice-watermark", "ENTWURF")
-    # Only app.css may place the watermark over the sheet: with an outdated
-    # stylesheet a positioning utility made it cover the page's buttons.
-    refute has_element?(show, ".invoice-watermark.absolute")
+    assert has_element?(show, "#invoice-letter .inv-watermark", "ENTWURF")
+    # The letter is styled only by its own invoice.css, so no utility class
+    # of app.css (outdated or not) can move or cover anything on it.
+    assert letter_classes(show) |> Enum.reject(&String.starts_with?(&1, "inv-")) == []
+    # Printed from this page, the letter gives way to a hint to use the print page.
+    assert has_element?(show, "#invoice-letter .inv-print-hint", "Print / PDF")
+    # The pages without margins belong to the print page only.
+    refute render(show) =~ ~r/@page\s*\{/
 
     show |> element("#issue-invoice") |> render_click()
     assert has_element?(show, "#last-issued", "first invoice")
@@ -92,6 +96,29 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert html =~ "Gemäß § 19 UStG"
     assert html =~ "Steuernummer: 12/345/67890"
     assert html =~ "Tätigkeitsnachweis"
+
+    # The print page brings its own styles and fonts and none of the asset
+    # build, so an outdated app.css or app.js cannot change the invoice.
+    assert html =~ ".inv-sheet {"
+    assert html =~ ~s(href="/fonts/inter/inter-latin-400-normal.woff2")
+    refute html =~ "/assets/"
+    # Footer and watermark are repeated in <body> for every printed page.
+    assert [_, _] = Regex.scan(~r/<footer class="inv-footer/, html)
+    # The pages keep room for the footer's two lines (tax number, bank).
+    assert html =~ ~s(style="--inv-footer-lines: 2")
+    assert html =~ "body:not(.inv-print-page) .inv-sheet"
+    # A4 pages without margins, and WebKit (Safari) marked before the page is
+    # laid out, as it prints footer and watermark from the sheets.
+    assert html =~ ~r/@page \{\s+size: A4;\s+margin: 0;\s+\}/
+    assert html =~ ~s[classList.add("inv-webkit")]
+    assert html =~ ".inv-webkit .inv-print-page .inv-sheet .inv-footer"
+    # The print page checks the lines the browser prints: the boxes carry
+    # their limits, and the toolbar has a warning for a wider layout.
+    assert html =~ ~s(data-footer-lines="2")
+    assert html =~ ~r/class="inv-sender inv-pre"\s+data-lines="7"/
+    assert html =~ ~r/class="inv-recipient inv-pre"\s+data-lines="6"/
+    assert html =~ ~r/class="inv-return"\s+data-lines="4"/
+    assert html =~ ~s(id="inv-layout-warning")
   end
 
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do
@@ -327,5 +354,14 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
 
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/admin/invoices")
     assert conn |> get(~p"/admin/invoices/1/print") |> redirected_to() == ~p"/"
+  end
+
+  defp letter_classes(view) do
+    html = view |> element("#invoice-letter") |> render()
+
+    ~r/class="([^"]*)"/
+    |> Regex.scan(html, capture: :all_but_first)
+    |> Enum.flat_map(fn [classes] -> String.split(classes) end)
+    |> Enum.uniq()
   end
 end

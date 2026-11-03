@@ -1,16 +1,56 @@
 <!DOCTYPE html>
-<html lang="de" data-theme="light">
+<html lang="de">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="csrf-token" content={get_csrf_token()} />
+    <meta name="color-scheme" content="light" />
     <%!-- The title is the default file name when saving as PDF. --%>
     <title>{assigns[:page_title] || "Rechnung"}</title>
-    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
+    <%!-- This page loads neither app.css nor app.js: the invoice styles come
+         inline from InvoiceComponents, so an outdated asset build cannot
+         change the printed invoice. The fonts are files in priv/static. --%>
+    <link
+      rel="preload"
+      href="/fonts/inter/inter-latin-400-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/inter/inter-latin-600-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/inter/inter-latin-700-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    {PotionZeitgeistWeb.InvoiceComponents.invoice_style()}
+    <%!-- A4 pages without margins, so the sheets print at their own size and
+         Chrome, Edge and Firefox print no date, title or address lines on
+         the invoice (Safari only without "Print headers and footers"). Only
+         on this page: printed from any other page, the margins stay. --%>
+    <style>
+      @page {
+        size: A4;
+        margin: 0;
+      }
+    </style>
+    <%!-- Safari and the other WebKit browsers print the footer and the
+         watermark from the sheets, see invoice.css. Set before the page is
+         laid out, so nothing changes on the page when printing starts. --%>
+    <script>
+      if (navigator.vendor === "Apple Computer, Inc.") {
+        document.documentElement.classList.add("inv-webkit");
+      }
     </script>
   </head>
-  <body class="invoice-print min-h-screen bg-neutral-200 print:bg-white">
+  <body class="inv-print-page">
     {@inner_content}
   </body>
 </html>

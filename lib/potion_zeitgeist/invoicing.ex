@@ -13,7 +13,7 @@ defmodule PotionZeitgeist.Invoicing do
 
   alias PotionZeitgeist.Repo
   alias PotionZeitgeist.Invoicing.{Calculation, Invoice, InvoiceEntry, InvoiceItem}
-  alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter}
+  alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout}
   alias PotionZeitgeist.TimeTracking.TimeEntry
 
   @payment_days 14
@@ -35,15 +35,18 @@ defmodule PotionZeitgeist.Invoicing do
 
   def get_template!(id), do: Repo.get!(InvoiceTemplate, id)
 
-  def create_template(attrs) do
+  # The template functions take the date of the sample letter that texts are
+  # measured with, see `InvoiceTemplate.changeset/3`; the form passes the
+  # date of its preview.
+  def create_template(attrs, today \\ today()) do
     %InvoiceTemplate{}
-    |> InvoiceTemplate.changeset(attrs)
+    |> InvoiceTemplate.changeset(attrs, today)
     |> Repo.insert()
   end
 
-  def update_template(%InvoiceTemplate{} = template, attrs) do
+  def update_template(%InvoiceTemplate{} = template, attrs, today \\ today()) do
     template
-    |> InvoiceTemplate.changeset(attrs)
+    |> InvoiceTemplate.changeset(attrs, today)
     |> Repo.update()
   end
 
@@ -53,8 +56,8 @@ defmodule PotionZeitgeist.Invoicing do
   """
   def delete_template(%InvoiceTemplate{} = template), do: Repo.delete(template)
 
-  def change_template(%InvoiceTemplate{} = template, attrs \\ %{}) do
-    InvoiceTemplate.changeset(template, attrs)
+  def change_template(%InvoiceTemplate{} = template, attrs \\ %{}, today \\ today()) do
+    InvoiceTemplate.changeset(template, attrs, today)
   end
 
   @doc """
@@ -737,11 +740,12 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Hints for the issue form that do not block issuing: sample texts left in
-  the letter, a number that does not follow the last one, and a date before
-  the last invoice.
+  the letter, a number that does not follow the last one, a date before the
+  last invoice, and texts too long for their place on the letter.
   """
   def issue_warnings(%Invoice{} = invoice, params) do
-    letter = invoice |> Repo.preload(:template) |> Letter.texts()
+    invoice = Repo.preload(invoice, [:template, :items])
+    letter = Letter.texts(invoice)
     text = Enum.join([letter.sender, letter.tax_id, letter.body, letter.footer], "\n")
     last = last_issued()
     number = params["number"] && String.trim(params["number"])
@@ -756,6 +760,61 @@ defmodule PotionZeitgeist.Invoicing do
         "The date is before invoice #{last.number} of #{Calendar.strftime(last.invoice_date, "%Y-%m-%d")}."
     ]
     |> Enum.filter(&is_binary/1)
+    |> Enum.concat(layout_warnings(invoice, params))
+  end
+
+  # Texts too long for their place on the letter, measured as the letter will
+  # print once issued with the number and date of the form. They still print
+  # cleanly, but move the address out of the envelope window or take room
+  # from the letter text. Templates and recipients saved since the letter
+  # has its line limits are checked when saved (with sample values for the
+  # placeholders), so this mostly catches older texts and long numbers.
+  defp layout_warnings(invoice, params) do
+    invoice =
+      invoice
+      |> Invoice.issue_changeset(params, Letter.texts(invoice))
+      |> Ecto.Changeset.apply_changes()
+
+    texts = Letter.texts(invoice)
+    vars = Letter.vars(invoice, texts)
+    fill = &Letter.fill(&1, vars)
+
+    number =
+      case LetterLayout.check_characters(invoice.number) do
+        :ok -> []
+        {:error, message} -> ["The invoice number #{message}."]
+      end
+
+    warnings =
+      for {box, text, fill, name} <- [
+            {:sender, texts.sender, fill, "The sender address of the template"},
+            {:recipient, invoice.recipient, &Function.identity/1, "The recipient"},
+            {:tax_id, texts.tax_id, fill, "The tax number line of the template"},
+            {:footer, texts.footer, fill, "The footer of the template"}
+          ],
+          message <- [layout_message(text, box, fill)],
+          message != nil,
+          do: {box, "#{name}#{message}."}
+
+    return_line =
+      with false <- List.keymember?(warnings, :sender, 0),
+           {:error, message} <- LetterLayout.check(Letter.build(invoice).sender_line, :return) do
+        ["The sender address of the template #{message}."]
+      else
+        _ -> []
+      end
+
+    number ++ Enum.map(warnings, &elem(&1, 1)) ++ return_line
+  end
+
+  # A text that fits as typed but not with the values of this invoice says
+  # so, since the cause can be a value such as the number of the form.
+  defp layout_message(text, box, fill) do
+    case {LetterLayout.check(text, box), LetterLayout.check(text, box, fill)} do
+      {{:error, message}, _filled} -> " " <> message
+      {:ok, {:error, message}} -> ", with its placeholders filled in, " <> message
+      {:ok, :ok} -> nil
+    end
   end
 
   @doc "The most recently issued (or cancelled) invoice."

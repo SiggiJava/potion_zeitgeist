@@ -1,0 +1,721 @@
+/*
+  The printed invoice: A4 sheets with every part at a fixed place, after
+  DIN 5008 form B, so the address shows in the window of a DL envelope.
+
+  This file is not part of the Tailwind build. PotionZeitgeistWeb.InvoiceComponents
+  reads it when the app is compiled and sends it inline with every page that
+  shows an invoice. The invoice therefore looks the same whatever stylesheet
+  the browser has: an outdated or missing app.css cannot move anything. Keep
+  it that way: the letter markup uses only the inv-* classes defined here, no
+  utility classes, and the rules below reset what browser and app styles set.
+
+  Page coordinates (mm from the top left corner of the page):
+    letterhead         sender block top right, x 105 to 190, y 10 to 45
+    address field      x 20 to 105, y 45 to 90 (return address line at the
+                       bottom of the first 17.7, then 6 lines of recipient
+                       from x 25)
+    information block  x 115 to 190, from y 50
+    letter text        x 25 to 190, from y 98.5 on page 1, from y 20 on
+                       further pages, down to 36 above the bottom edge
+    footer             x 25 to 190, ends 10 above the bottom edge, on every page
+                       (in Safari at the end of each sheet, see the print rules)
+
+  Nothing is placed absolutely except the footer, so nothing can print over
+  anything else. A letterhead or address longer than its box moves what
+  follows down; a footer with more lines keeps the letter text further from
+  the bottom edge (--inv-footer-lines, set by the letter component). The
+  line limits that keep every box at its place are checked when a template
+  or invoice is saved, in PotionZeitgeist.Invoicing.LetterLayout, which
+  measures with the glyph widths and kerning of the font files below
+  (priv/invoice_font/metrics.txt) and needs to know the widths and font
+  sizes of these boxes. It counts on the text settings of .inv-sheet and
+  .inv-footer (no ligatures or contextual alternates, unhinted widths, no
+  hyphenation): change those, the font files or a box, and LetterLayout and
+  its metrics have to change with them. A browser that still sets the text
+  wider (Windows without font smoothing, a minimum font size) is caught by
+  the print page, see PotionZeitgeistWeb.InvoiceComponents.print_toolbar/1.
+*/
+
+/* Inter, shipped in priv/static/fonts/inter (SIL Open Font License), under a
+   name of its own, so no other installed version of Inter is used and lines
+   break the same on every computer. */
+@font-face {
+  font-family: "Invoice Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("/fonts/inter/inter-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Invoice Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("/fonts/inter/inter-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Invoice Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("/fonts/inter/inter-latin-600-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Invoice Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("/fonts/inter/inter-latin-ext-600-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Invoice Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("/fonts/inter/inter-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Invoice Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("/fonts/inter/inter-latin-ext-700-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ---- Reset: nothing inside the letter takes styles from elsewhere ---- */
+
+.inv-document,
+.inv-document * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0 solid #d4d4d4;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: inherit;
+  font-variant-ligatures: inherit;
+  font-feature-settings: inherit;
+  text-rendering: inherit;
+  hyphens: inherit;
+  word-break: inherit;
+  line-break: inherit;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-align: inherit;
+  text-decoration: none;
+  text-indent: 0;
+  text-transform: none;
+  text-shadow: none;
+  vertical-align: baseline;
+  list-style: none;
+  white-space: inherit;
+  float: none;
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- Sheets ---- */
+
+/* Block layout, so a sheet wider than the screen overflows to the right only
+   and the page can scroll to every part of it. */
+.inv-document {
+  display: block;
+}
+
+.inv-sheet {
+  position: relative;
+  display: block;
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  /* The letter text area. Page 1 pulls its letterhead up into the top
+     padding; the bottom padding keeps text clear of the footer: 10 mm
+     below it, 2.5 mm above its first line, 3.6 mm for each of its lines
+     and 4 mm above it, at least 36 mm. The print page's script raises
+     --inv-footer-lines when the footer prints taller than counted. */
+  padding: 20mm 20mm 36mm 25mm;
+  padding-bottom: max(36mm, calc(16.5mm + var(--inv-footer-lines, 0) * 3.6mm));
+  background: #fff;
+  color: #171717;
+  color-scheme: light;
+  font-family: "Invoice Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10pt;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-break: auto;
+  hyphens: manual;
+  font-kerning: normal;
+  font-variant-ligatures: none;
+  font-feature-settings: normal;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+  /* The rest of the font settings, so none comes from the page around. */
+  font-stretch: normal;
+  font-variant-caps: normal;
+  font-variant-numeric: normal;
+  font-variant-east-asian: normal;
+  font-variant-position: normal;
+  font-size-adjust: none;
+  font-optical-sizing: auto;
+  font-variation-settings: normal;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.08);
+}
+
+.inv-sheet + .inv-sheet {
+  margin-top: 8mm;
+}
+
+.inv-pre {
+  white-space: pre-line;
+}
+
+/* ---- Page 1: letterhead, address field and information block ----
+   In normal flow, with fixed widths and minimum heights: a text that fits
+   its box keeps everything at the positions above, a longer one moves what
+   follows down instead of running into it. */
+
+.inv-head {
+  display: flow-root;
+  /* From the top edge of the page across its full width, down to the line
+     of the subject; 8.5 mm stay free below the address field. */
+  min-height: 98.5mm;
+  margin: -20mm -20mm 0 -25mm;
+  padding: 10mm 20mm 8.5mm;
+}
+
+.inv-sender {
+  width: 85mm;
+  min-height: 35mm;
+  margin-left: auto;
+  color: #404040;
+  font-size: 8.5pt;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.inv-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.inv-address {
+  flex: none;
+  width: 85mm;
+  min-height: 45mm;
+  padding-left: 5mm;
+}
+
+/* The return address sits on the bottom of the 17.7 mm high zone above the
+   recipient and grows upwards if it ever needs two lines. */
+.inv-return-zone {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 17.7mm;
+  padding-bottom: 1mm;
+}
+
+.inv-return {
+  padding-bottom: 0.6mm;
+  border-bottom: 0.5pt solid #a3a3a3;
+  color: #525252;
+  font-size: 7pt;
+  line-height: 1.3;
+}
+
+.inv-recipient {
+  min-height: 27.3mm;
+  font-size: 10pt;
+  line-height: 4.2mm;
+}
+
+.inv-info {
+  flex: none;
+  width: 75mm;
+  margin-top: 5mm;
+  display: grid;
+  /* Labels keep their width; a long invoice number wraps inside its column. */
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 3mm;
+  row-gap: 0.8mm;
+  font-size: 9pt;
+  line-height: 1.35;
+}
+
+.inv-info dt {
+  color: #525252;
+  white-space: nowrap;
+}
+
+.inv-info dd {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Dates and the service period keep to one line; all digits have the same
+   width, so every period fits. */
+.inv-info .inv-date {
+  white-space: nowrap;
+}
+
+/* ---- Letter text ---- */
+
+.inv-subject {
+  display: block;
+  font-size: 12pt;
+  font-weight: 700;
+  line-height: 1.3;
+  break-after: avoid;
+}
+
+.inv-head + .inv-text {
+  margin-top: 0;
+}
+
+.inv-text {
+  display: block;
+  margin-top: 6mm;
+}
+
+.inv-small {
+  font-size: 9pt;
+}
+
+.inv-tax-note {
+  display: block;
+  margin-top: 4mm;
+  font-size: 9pt;
+}
+
+/* ---- Tables: fixed column widths, long text wraps inside its cell ---- */
+
+.inv-table {
+  display: table;
+  width: 100%;
+  margin-top: 6mm;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 9.5pt;
+  line-height: 1.35;
+}
+
+.inv-table thead {
+  display: table-header-group;
+}
+
+.inv-table tbody {
+  display: table-row-group;
+}
+
+.inv-table tfoot {
+  display: table-footer-group;
+}
+
+.inv-table tr {
+  display: table-row;
+  break-inside: avoid;
+}
+
+.inv-table col {
+  display: table-column;
+}
+
+.inv-table th,
+.inv-table td {
+  display: table-cell;
+  padding: 1.6mm 2mm 1.6mm 0;
+  vertical-align: top;
+  text-align: left;
+}
+
+.inv-table th:last-child,
+.inv-table td:last-child {
+  padding-right: 0;
+}
+
+.inv-table th {
+  font-weight: 600;
+  border-bottom: 1pt solid #262626;
+}
+
+.inv-table tbody td {
+  border-bottom: 0.5pt solid #d4d4d4;
+}
+
+.inv-table .inv-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.inv-table .inv-nowrap {
+  white-space: nowrap;
+}
+
+.inv-table tfoot td {
+  padding-top: 1.2mm;
+  padding-bottom: 1.2mm;
+}
+
+.inv-table tfoot .inv-total td {
+  border-top: 1pt solid #262626;
+  font-weight: 700;
+}
+
+.inv-col-pos {
+  width: 11mm;
+}
+
+.inv-col-hours {
+  width: 19mm;
+}
+
+/* Wide enough for the largest rate (8 digits) and amount (10 digits) the
+   app accepts, so a number never runs into the next column. */
+.inv-col-rate {
+  width: 29.5mm;
+}
+
+.inv-col-amount {
+  width: 33mm;
+}
+
+.inv-timesheet {
+  font-size: 9pt;
+}
+
+.inv-timesheet tbody td {
+  padding-top: 1.1mm;
+  padding-bottom: 1.1mm;
+  border-bottom-color: #e5e5e5;
+}
+
+.inv-col-date {
+  width: 22mm;
+}
+
+.inv-col-user {
+  width: 34mm;
+}
+
+.inv-col-project {
+  width: 38mm;
+}
+
+.inv-col-duration {
+  width: 24mm;
+}
+
+.inv-subtitle {
+  display: block;
+  margin-top: 1mm;
+  color: #525252;
+  font-size: 9pt;
+}
+
+/* ---- Footer and watermark ----
+   Both stand inside the sheet on screen. The print page also renders them a
+   second time directly in <body> (inv-page-*), see the print rules below, so
+   they carry their own font settings instead of inheriting from the sheet. */
+
+/* Tax number and bank details at the bottom of the page. 165 mm wide also as
+   the copy the print page prints, which is placed on the page and not in
+   the sheet: Chromium's printed page is slightly narrower than 210 mm. */
+.inv-footer {
+  position: absolute;
+  left: 25mm;
+  width: 165mm;
+  bottom: 10mm;
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 2.5mm 0 0;
+  border: 0 solid #d4d4d4;
+  border-top-width: 0.5pt;
+  background: none;
+  color: #525252;
+  font-family: "Invoice Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 7.5pt;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-break: auto;
+  hyphens: manual;
+  letter-spacing: normal;
+  word-spacing: normal;
+  font-kerning: normal;
+  font-variant-ligatures: none;
+  font-feature-settings: normal;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+  font-stretch: normal;
+  font-variant-caps: normal;
+  font-variant-numeric: normal;
+  font-variant-east-asian: normal;
+  font-variant-position: normal;
+  font-size-adjust: none;
+  font-optical-sizing: auto;
+  font-variation-settings: normal;
+}
+
+/* ENTWURF / STORNIERT across the page; never takes a click. */
+.inv-watermark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: "Invoice Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+.inv-watermark span {
+  display: block;
+  transform: rotate(-30deg);
+  color: rgb(23 23 23 / 0.07);
+  font-size: 64pt;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.inv-page-footer,
+.inv-page-watermark,
+.inv-print-hint {
+  display: none;
+}
+
+/* ---- The print page (/admin/invoices/:id/print) ---- */
+
+/* No min-height: the background of <body> fills the whole window anyway, and
+   a height in viewport units would change while Safari prints. */
+.inv-print-page {
+  margin: 0;
+  background: #e5e5e5;
+  color: #171717;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.inv-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #d4d4d4;
+  background: rgb(255 255 255 / 0.95);
+}
+
+.inv-toolbar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.inv-toolbar-hint {
+  color: #525252;
+  font-size: 13px;
+}
+
+/* Shown by the print page's script when this browser sets the letter wider
+   than LetterLayout counts. */
+.inv-toolbar-warning {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #78350f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inv-toolbar-warning[hidden] {
+  display: none;
+}
+
+.inv-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: #171717;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.inv-button:hover {
+  background: #f5f5f5;
+}
+
+.inv-button-primary {
+  background: #ea6a12;
+  color: #fff;
+}
+
+.inv-button-primary:hover {
+  background: #c9570c;
+}
+
+.inv-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.inv-print-main {
+  padding: 8mm 0;
+  overflow-x: auto;
+}
+
+/* ---- Printing ---- */
+
+@media print {
+  /* Only the print page prints the letter. Printed from any other page, the
+     browser would scale it to its page margins and add the app around it,
+     which moves the address out of the envelope window; those pages print
+     a hint to use the print page instead. */
+  body:not(.inv-print-page) .inv-sheet {
+    display: none;
+  }
+
+  body:not(.inv-print-page) .inv-print-hint {
+    display: block;
+    padding: 3mm 4mm;
+    background: #fff;
+    color: #171717;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 12pt;
+    line-height: 1.4;
+  }
+
+  .inv-sheet {
+    min-height: 0;
+    box-shadow: none;
+  }
+
+  .inv-sheet + .inv-sheet {
+    margin-top: 0;
+    break-before: page;
+  }
+
+  .inv-print-page {
+    background: #fff;
+  }
+
+  .inv-toolbar {
+    display: none;
+  }
+
+  .inv-print-main {
+    padding: 0;
+    overflow: visible;
+  }
+
+  /* On the print page each sheet is a run of A4 pages without margins (the
+     @page rule of layouts/print.html.heex). The sheet's padding is repeated
+     on every page, so text that runs onto a further page keeps the same
+     margins and stays clear of the footer. */
+  .inv-print-page .inv-sheet {
+    margin: 0;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
+  /* A repeated table footer pushes the totals onto an extra page in Chromium. */
+  .inv-print-page .inv-table tfoot {
+    display: table-row-group;
+  }
+
+  /* Totals do not start a page on their own, the last item comes along. */
+  .inv-print-page .inv-table tfoot tr:first-child {
+    break-before: avoid;
+  }
+
+  /* Footer and watermark on every printed page. Chromium repeats a fixed box
+     on every page only when it sits directly in <body>; inside the sheets it
+     skipped pages of a long time sheet. So the copies in the sheets give way
+     to the copies the print page puts into <body>. */
+  .inv-print-page .inv-sheet .inv-footer,
+  .inv-print-page .inv-sheet .inv-watermark {
+    display: none;
+  }
+
+  .inv-print-page > .inv-page-footer {
+    display: block;
+    position: fixed;
+  }
+
+  .inv-print-page > .inv-page-watermark {
+    display: flex;
+    position: fixed;
+  }
+
+  /* Safari and the other WebKit browsers (the print page marks them with
+     inv-webkit) print a fixed box only once, at a place of their own, and
+     print nothing at all on a page whose layout changes while they print,
+     which boxes placed against the window risk. So there the sheets print
+     their own footer and watermark, and each sheet is at least one page
+     tall, so the footer of a one page sheet sits at the bottom of its page.
+     A sheet that runs over several pages prints its footer on its last
+     page. */
+  .inv-webkit .inv-print-page > .inv-page-footer,
+  .inv-webkit .inv-print-page > .inv-page-watermark {
+    display: none;
+  }
+
+  .inv-webkit .inv-print-page .inv-sheet .inv-footer {
+    display: block;
+  }
+
+  .inv-webkit .inv-print-page .inv-sheet .inv-watermark {
+    display: flex;
+  }
+
+  /* 1 mm short of the page, so rounding cannot add an empty page. */
+  .inv-webkit .inv-print-page .inv-sheet {
+    min-height: 296mm;
+  }
+}

@@ -4,6 +4,7 @@ defmodule PotionZeitgeist.InvoicingTest do
   import PotionZeitgeist.Fixtures
 
   alias PotionZeitgeist.{Accounts, Invoicing, TimeTracking}
+  alias PotionZeitgeist.Invoicing.{Invoice, InvoiceTemplate}
 
   setup do
     user = user_fixture(%{"name" => "Michael"})
@@ -247,6 +248,79 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert [_] = errors.recipient
     end
 
+    test "need a recipient that fits the address field of the letter", ctx do
+      recipient = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => recipient})
+               )
+
+      assert errors_on(changeset).recipient == [
+               "has 7 lines, the address field has room for 6"
+             ]
+
+      six_lines = recipient |> String.split("\n") |> Enum.take(6) |> Enum.join("\n")
+
+      assert {:ok, _invoice} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => six_lines <> "\n"})
+               )
+
+      # Six lines, but the company name needs two lines in the address field.
+      wrapping =
+        Enum.join(
+          [
+            "Musterfirma Beratungsgesellschaft für Informationstechnologie mbH",
+            "Abteilung Einkauf",
+            "z. Hd. Frau Erika Musterfrau",
+            "Hauptstraße 5",
+            "10115 Berlin",
+            "Deutschland"
+          ],
+          "\n"
+        )
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => wrapping})
+               )
+
+      assert errors_on(changeset).recipient == [
+               "takes 7 lines in the address field, which has room for 6: " <>
+                 "line 1 is too long for one line"
+             ]
+    end
+
+    test "need a recipient the invoice font can print", ctx do
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{
+                   "recipient" => "Kunde GmbH 🚀\nWeg 2\n10115 Berlin"
+                 })
+               )
+
+      assert errors_on(changeset).recipient == [
+               "has characters the invoice font does not have: 🚀"
+             ]
+    end
+
+    test "check the stored recipient with every save", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries)
+      too_long = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
+      Repo.update_all(from(i in Invoice, where: i.id == ^draft.id), set: [recipient: too_long])
+      draft = Invoicing.get_invoice!(draft.id)
+
+      # The recipient is not changed, the stored one is checked.
+      assert {:error, changeset} =
+               Invoicing.update_draft(
+                 draft,
+                 draft_params(ctx.template, ctx.entries, %{"recipient" => too_long})
+               )
+
+      assert [_] = errors_on(changeset).recipient
+    end
+
     test "cannot bill time twice", ctx do
       draft_fixture(ctx.template, ctx.entries)
 
@@ -397,6 +471,54 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert earlier =~ "before invoice 2026-005"
     end
 
+    test "warns about texts saved before the letter had line limits", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries)
+      too_long = Enum.map_join(1..7, "\n", &"Zeile #{&1}")
+      Repo.update_all(from(i in Invoice, where: i.id == ^draft.id), set: [recipient: too_long])
+
+      assert Invoicing.issue_warnings(Repo.reload(draft), %{}) == [
+               "The recipient has 7 lines, the address field has room for 6."
+             ]
+    end
+
+    test "measures the letter with the number and date of the issue form", ctx do
+      footer =
+        "Zeile 1\nZeile 2\nZeile 3\nBitte geben Sie bei Zahlung die Rechnungsnummer " <>
+          "{{rechnungsnummer}} an: Musterbank · IBAN DE12 3456 7890 1234 5678 90"
+
+      # Fits with the number of the preview.
+      {:ok, template} = Invoicing.update_template(ctx.template, %{"footer" => footer})
+      draft = draft_fixture(template, ctx.entries)
+
+      assert Invoicing.issue_warnings(draft, %{
+               "number" => "2026-001",
+               "invoice_date" => "2026-11-02"
+             }) == []
+
+      assert Invoicing.issue_warnings(draft, %{
+               "number" => "RE-2026-11-0001 Projekt Website-Relaunch",
+               "invoice_date" => "2026-11-02"
+             }) == [
+               "The footer of the template, with its placeholders filled in, takes 5 lines " <>
+                 "in the footer, which has room for 4: line 4 is too long for one line."
+             ]
+    end
+
+    test "warns about characters of the issue form the invoice font does not have", ctx do
+      footer = "IBAN: DE12 3456 7890 1234 5678 90 · Verwendungszweck: {{rechnungsnummer}}"
+      {:ok, template} = Invoicing.update_template(ctx.template, %{"footer" => footer})
+      draft = draft_fixture(template, ctx.entries)
+
+      assert Invoicing.issue_warnings(draft, %{
+               "number" => "2026-001 ✓",
+               "invoice_date" => "2026-11-02"
+             }) == [
+               "The invoice number has characters the invoice font does not have: ✓.",
+               "The footer of the template, with its placeholders filled in, has characters " <>
+                 "the invoice font does not have: ✓."
+             ]
+    end
+
     test "the time sheet survives deleting the user", ctx do
       {:ok, entry} = TimeTracking.update_entry(hd(ctx.entries), %{"notes" => "Startseite"})
       draft = draft_fixture(ctx.template, [entry])
@@ -515,6 +637,117 @@ defmodule PotionZeitgeist.InvoicingTest do
   test "templates need sender, tax number and text" do
     assert {:error, changeset} = Invoicing.create_template(%{"name" => "X"})
     assert %{sender: [_], tax_id: [_], body: [_]} = errors_on(changeset)
+  end
+
+  test "letterhead and footer of a template must fit their boxes on the letter" do
+    lines = fn count -> Enum.map_join(1..count, "\n", &"Zeile #{&1}") end
+    long = String.duplicate("Kontoinhaber Max Mustermann ", 6)
+
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Long",
+               "sender" => lines.(8),
+               "tax_id" => "Steuernummer: 1 " <> long,
+               "body" => "Text",
+               "footer" => lines.(3) <> "\n" <> long
+             })
+
+    assert errors_on(changeset) == %{
+             sender: ["has 8 lines, the letterhead has room for 7"],
+             tax_id: ["is too long for one line of the footer"],
+             footer: [
+               "takes 5 lines in the footer, which has room for 4: line 4 is too long for one line"
+             ]
+           }
+
+    assert {:ok, _template} =
+             Invoicing.create_template(%{
+               "name" => "Fits",
+               "sender" => lines.(7),
+               "tax_id" => "Steuernummer: 1",
+               "body" => "Text",
+               "footer" => "\n" <> lines.(4) <> "\n"
+             })
+  end
+
+  test "template texts must have only characters the invoice font has" do
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Emoji",
+               "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt\n☎ 0123 456789",
+               "tax_id" => "Steuernummer: 12/345/67890",
+               "body" => "Text",
+               "footer" => "IBAN: DE12 3456 7890 1234 5678 90 ✅"
+             })
+
+    assert errors_on(changeset) == %{
+             sender: ["has characters the invoice font does not have: ☎"],
+             footer: ["has characters the invoice font does not have: ✅"]
+           }
+  end
+
+  test "template texts must fit with their placeholders filled in" do
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Placeholders",
+               "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt",
+               "tax_id" =>
+                 "USt-IdNr.: DE123456789 · Steuernummer: 12/345/67890 · Finanzamt Musterstadt",
+               "body" => "Text",
+               "footer" =>
+                 "Zeile 1\nZeile 2\nZeile 3\n" <>
+                   "Inhaber: Max Mustermann · {{steuernummer}} · Gerichtsstand Musterstadt"
+             })
+
+    assert errors_on(changeset) == %{
+             footer: [
+               "takes 5 lines in the footer, which has room for 4: line 4 is too long for one " <>
+                 "line with its placeholders filled in as in the preview"
+             ]
+           }
+  end
+
+  test "the letterhead must give a return address that fits above the recipient" do
+    sender =
+      Enum.join(
+        [
+          "Dr. rer. nat. Maximilian Alexander Mustermann-Schmidtbauer, öffentlich bestellter " <>
+            "und vereidigter Sachverständiger für Informationstechnologie",
+          "Ingenieurbüro für Informationstechnologie, Datenschutz und IT-Sicherheit, " <>
+            "Musterstraße 123, Hinterhaus",
+          "12345 Musterstadt"
+        ],
+        "\n"
+      )
+
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Long return address",
+               "sender" => sender,
+               "tax_id" => "Steuernummer: 12/345/67890",
+               "body" => "Text"
+             })
+
+    assert errors_on(changeset) == %{
+             sender: [
+               "gives a return address of 5 lines above the recipient, which has room for 4: " <>
+                 "shorten the lines with name, street, postcode and city"
+             ]
+           }
+  end
+
+  test "a template saved before the line limits is checked with its next save" do
+    template = template_fixture()
+    too_long = Enum.map_join(1..8, "\n", &"Zeile #{&1}")
+
+    Repo.update_all(from(t in InvoiceTemplate, where: t.id == ^template.id),
+      set: [sender: too_long]
+    )
+
+    template = Invoicing.get_template!(template.id)
+
+    assert {:error, changeset} = Invoicing.update_template(template, %{"name" => "Renamed"})
+    assert errors_on(changeset) == %{sender: ["has 8 lines, the letterhead has room for 7"]}
   end
 
   defp ids(entries), do: Enum.map(entries, & &1.id)

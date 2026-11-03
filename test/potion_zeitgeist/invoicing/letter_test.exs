@@ -70,6 +70,39 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
     assert [%{hours: "2,00", rate: "85,00 €", amount: "170,00 €"}] = letter.items
   end
 
+  test "texts that print line by line start and end without an empty line" do
+    letter =
+      Letter.build(
+        issued_invoice(%{
+          recipient: "\r\nKunde GmbH\r\nWeg 2\r\n10115 Berlin\r\n",
+          letter_sender: "\nMichael Beispiel\nHauptstraße 1\n12345 Musterstadt\n\n",
+          letter_footer: "IBAN DE12\n"
+        })
+      )
+
+    assert letter.recipient == "Kunde GmbH\r\nWeg 2\r\n10115 Berlin"
+    assert letter.sender == "Michael Beispiel\nHauptstraße 1\n12345 Musterstadt"
+    assert letter.footer == "IBAN DE12"
+  end
+
+  test "boxed texts print without invisible characters and with composed umlauts" do
+    sender = :unicode.characters_to_nfd_binary("Michael Bäcker\nHauptstraße 1\n12345 Musterstadt")
+
+    letter =
+      Letter.build(
+        issued_invoice(%{
+          recipient: "Kunden\u00ADservice GmbH\nWeg\u200B 2\n10115 Berlin",
+          letter_sender: sender,
+          letter_footer: "IBAN\u2060 DE12"
+        })
+      )
+
+    assert letter.recipient == "Kundenservice GmbH\nWeg 2\n10115 Berlin"
+    assert letter.sender == "Michael Bäcker\nHauptstraße 1\n12345 Musterstadt"
+    assert letter.sender_line == "Michael Bäcker · Hauptstraße 1 · 12345 Musterstadt"
+    assert letter.footer == "IBAN DE12"
+  end
+
   test "builds VAT rows in standard tax mode" do
     letter =
       Letter.build(

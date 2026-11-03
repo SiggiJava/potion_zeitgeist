@@ -2,7 +2,7 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias PotionZeitgeist.Invoicing.Calculation
+  alias PotionZeitgeist.Invoicing.{Calculation, LetterLayout}
 
   @statuses ~w(draft issued cancelled)
   @rate_modes ~w(single per_project)
@@ -163,15 +163,24 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
     end
   end
 
-  # German invoices need the recipient's full name and address.
+  # German invoices need the recipient's full name and address, and it has to
+  # fit the address field, which shows in the window of the envelope. The
+  # stored text is checked too, so a draft from before the limit is fixed
+  # with its next save.
   defp validate_recipient(changeset) do
-    validate_change(changeset, :recipient, fn :recipient, recipient ->
-      lines = recipient |> String.split(["\r\n", "\n"]) |> Enum.reject(&(String.trim(&1) == ""))
+    changeset =
+      validate_change(changeset, :recipient, fn :recipient, recipient ->
+        lines = recipient |> String.split(["\r\n", "\n"]) |> Enum.reject(&(String.trim(&1) == ""))
 
-      if length(lines) >= 2,
-        do: [],
-        else: [recipient: "needs the name and the full address, on separate lines"]
-    end)
+        if length(lines) >= 2,
+          do: [],
+          else: [recipient: "needs the name and the full address, on separate lines"]
+      end)
+
+    case LetterLayout.check(get_field(changeset, :recipient), :recipient) do
+      :ok -> changeset
+      {:error, message} -> add_error(changeset, :recipient, message)
+    end
   end
 
   defp validate_dates(changeset) do
