@@ -107,6 +107,17 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
      socket |> apply_params(incoming, event["_target"]) |> assign(:errors, []) |> refresh()}
   end
 
+  # The due date is optional. A date field is hard to empty in some
+  # browsers (Safari), so the form has a button for it.
+  @impl true
+  def handle_event("remove_due_date", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:params, Map.put(socket.assigns.params, "due_date", ""))
+     |> assign(:errors, Keyword.delete(socket.assigns.errors, :due_date))
+     |> refresh()}
+  end
+
   @impl true
   def handle_event("toggle_group", %{"key" => key}, socket) do
     ids =
@@ -301,6 +312,21 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
       unselected |> Enum.map(&Calculation.entry_minutes/1) |> Enum.sum()
     )
     |> assign(:form, to_form(params, as: :invoice, errors: errors))
+    |> assign(:due_date_gap, due_date_gap(params, socket.assigns.templates))
+  end
+
+  defp due_date?(params), do: params["due_date"] not in [nil, ""]
+
+  # Without a due date, a template that prints {{faellig_am}} outside its
+  # block leaves a gap in the letter.
+  defp due_date_gap(params, templates) do
+    template = Enum.find(templates, &(to_string(&1.id) == params["template_id"]))
+
+    if template && not due_date?(params) do
+      template
+      |> Map.take([:sender, :tax_id, :subject, :body, :footer])
+      |> Invoicing.due_date_gap()
+    end
   end
 
   defp month_options(today, invoice, month) do
@@ -611,10 +637,36 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                     type="date"
                     label="Invoice date"
                   />
-                  <.input field={@form[:due_date]} id="invoice-due-date" type="date" label="Due date" />
+                  <div>
+                    <.input
+                      field={@form[:due_date]}
+                      id="invoice-due-date"
+                      type="date"
+                      label="Due date (optional)"
+                    />
+                    <button
+                      :if={due_date?(@params)}
+                      type="button"
+                      id="remove-due-date"
+                      phx-click="remove_due_date"
+                      class="btn btn-ghost btn-xs gap-1 -mt-1"
+                    >
+                      <.icon name="hero-x-mark" class="size-4" /> No due date
+                    </button>
+                    <p
+                      :if={!due_date?(@params)}
+                      id="no-due-date"
+                      class="text-xs text-base-content/60 -mt-1"
+                    >
+                      The invoice prints no due date.
+                    </p>
+                  </div>
                 </div>
                 <p class="text-xs text-base-content/50 -mt-2">
                   When you issue the invoice you can set its date again.
+                </p>
+                <p :if={@due_date_gap} id="due-date-gap" class="text-sm text-warning">
+                  <.icon name="hero-exclamation-triangle" class="size-4" /> {@due_date_gap}
                 </p>
 
                 <div class="flex flex-wrap gap-6 mt-2">

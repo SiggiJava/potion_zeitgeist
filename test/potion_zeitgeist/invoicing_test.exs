@@ -321,6 +321,21 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert [_] = errors_on(changeset).recipient
     end
 
+    test "need no due date, and a new invoice like one without has none either", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries, %{"due_date" => ""})
+      assert draft.due_date == nil
+      refute List.keymember?(Invoicing.letter(draft).info, "Fällig am", 0)
+
+      assert {:ok, invoice} =
+               Invoicing.issue_invoice(draft, %{
+                 "number" => "2026-001",
+                 "invoice_date" => "2026-11-04"
+               })
+
+      assert invoice.due_date == nil
+      assert Invoicing.new_invoice_params(~D[2026-12-03], invoice)["due_date"] == ""
+    end
+
     test "cannot bill time twice", ctx do
       draft_fixture(ctx.template, ctx.entries)
 
@@ -469,6 +484,26 @@ defmodule PotionZeitgeist.InvoicingTest do
 
       assert skipped =~ "2026-006"
       assert earlier =~ "before invoice 2026-005"
+    end
+
+    test "warns about a gap where a letter without due date names it", ctx do
+      [first, second, _] = ctx.entries
+      body = "{{positionen}}\n\nBitte zahlen Sie {{gesamtbetrag}} bis zum {{faellig_am}}."
+      {:ok, template} = Invoicing.update_template(ctx.template, %{"body" => body})
+      params = %{"number" => "2026-001", "invoice_date" => "2026-11-02"}
+
+      without = draft_fixture(template, [first], %{"due_date" => ""})
+      assert [warning] = Invoicing.issue_warnings(without, params)
+      assert warning =~ "{{#faellig_am}} and {{/faellig_am}}"
+
+      assert Invoicing.issue_warnings(draft_fixture(template, [second]), params) == []
+
+      body =
+        "{{positionen}}\n\nBitte zahlen Sie {{gesamtbetrag}}{{#faellig_am}} bis zum " <>
+          "{{faellig_am}}{{/faellig_am}}."
+
+      {:ok, _template} = Invoicing.update_template(template, %{"body" => body})
+      assert Invoicing.issue_warnings(Invoicing.get_invoice!(without.id), params) == []
     end
 
     test "warns about texts saved before the letter had line limits", ctx do
@@ -703,6 +738,59 @@ defmodule PotionZeitgeist.InvoicingTest do
              footer: [
                "takes 5 lines in the footer, which has room for 4: line 4 is too long for one " <>
                  "line with its placeholders filled in as in the preview"
+             ]
+           }
+  end
+
+  test "template blocks must open and close on one line" do
+    assert {:error, changeset} =
+             Invoicing.create_template(%{
+               "name" => "Blocks",
+               "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt",
+               "tax_id" => "Steuernummer: 12/345/67890",
+               "body" =>
+                 "Bitte zahlen Sie{{#faellig_am}} bis zum\n{{faellig_am}}{{/faellig_am}}.",
+               "footer" => "{{^ust}}Ohne Umsatzsteuer"
+             })
+
+    assert errors_on(changeset) == %{
+             body: ["has {{#faellig_am}} in line 1 without {{/faellig_am}} on the same line"],
+             footer: ["has {{^ust}} in line 1 without {{/ust}} on the same line"]
+           }
+  end
+
+  test "template texts with blocks fit without the tags and without a due date" do
+    lines = "Zeile 1\nZeile 2\nZeile 3\n"
+    bank = "Musterbank · IBAN DE12 3456 7890 1234 5678 90 · BIC MUSTDEFFXXX"
+
+    template = %{
+      "sender" => "Max Mustermann\nMusterstraße 1\n12345 Musterstadt",
+      "tax_id" => "Steuernummer: 12/345/67890 · USt-IdNr.: DE123456789",
+      "body" => "Text"
+    }
+
+    # Too long with the tags, which never print.
+    footer =
+      lines <>
+        bank <> "{{#faellig_am}} · Zahlbar bis zum {{faellig_am}} ohne Abzug{{/faellig_am}}"
+
+    assert {:ok, _template} =
+             Invoicing.create_template(
+               Map.merge(template, %{"name" => "Due", "footer" => footer})
+             )
+
+    # Fits with a due date, which leaves the block out, but not without one.
+    footer = lines <> bank <> "{{^faellig_am}} · Zahlbar sofort · {{steuernummer}}{{/faellig_am}}"
+
+    assert {:error, changeset} =
+             Invoicing.create_template(
+               Map.merge(template, %{"name" => "None", "footer" => footer})
+             )
+
+    assert errors_on(changeset) == %{
+             footer: [
+               "takes 5 lines in the footer, which has room for 4: line 4 is too long for one " <>
+                 "line with its placeholders filled in as in the preview and without a due date"
              ]
            }
   end

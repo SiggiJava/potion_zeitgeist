@@ -42,6 +42,59 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
              Invoicing.list_templates()
   end
 
+  test "the template preview shows the letter with and without a due date", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/admin/invoice-templates/new")
+
+    assert has_element?(view, "#template-preview", "Fällig am")
+    assert has_element?(view, "#template-preview", "bis zum")
+    assert has_element?(view, "#blocks-help", "{{#faellig_am}}")
+
+    view |> element("#preview-due-date") |> render_click()
+    refute has_element?(view, "#template-preview", "Fällig am")
+    refute has_element?(view, "#template-preview", "bis zum")
+
+    html =
+      view
+      |> form("#template-form", invoice_template: %{body: "Bitte zahlen Sie{{#faellig_am}} bis"})
+      |> render_change()
+
+    assert html =~ "has {{#faellig_am}} in line 1 without {{/faellig_am}} on the same line"
+  end
+
+  test "an invoice can leave out the due date", ctx do
+    template_fixture(%{"body" => "{{positionen}}\n\nZahlbar bis zum {{faellig_am}}."})
+    {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/new")
+
+    view |> form("#invoice-form", invoice: %{month: "2026-10"}) |> render_change()
+    view |> element("#toggle-group-#{ctx.project.id}") |> render_click()
+    refute has_element?(view, "#no-due-date")
+    refute has_element?(view, "#due-date-gap")
+
+    # The date field is hard to empty in some browsers, so there is a button.
+    view |> element("#remove-due-date") |> render_click()
+    assert has_element?(view, "#no-due-date")
+    refute has_element?(view, "#remove-due-date")
+    # The template names the due date outside a block, which leaves a gap.
+    assert has_element?(view, "#due-date-gap", "{{#faellig_am}}")
+
+    view |> form("#invoice-form", invoice: %{due_date: "2026-11-30"}) |> render_change()
+    assert has_element?(view, "#remove-due-date")
+    refute has_element?(view, "#due-date-gap")
+    view |> element("#remove-due-date") |> render_click()
+
+    {:ok, show, _html} =
+      view
+      |> form("#invoice-form",
+        invoice: %{hourly_rate: "80", recipient: "Kunde GmbH\nWeg 2\n10115 Berlin"}
+      )
+      |> render_submit()
+      |> follow_redirect(ctx.conn)
+
+    assert [%{due_date: nil}] = Invoicing.list_invoices()
+    assert has_element?(show, "#invoice-letter", "Rechnungsdatum")
+    refute has_element?(show, "#invoice-letter", "Fällig am")
+  end
+
   test "an invoice bills the selected time of a month and can be issued and printed", ctx do
     template = template_fixture()
     {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/new")

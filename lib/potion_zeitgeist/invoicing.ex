@@ -63,7 +63,8 @@ defmodule PotionZeitgeist.Invoicing do
   @doc """
   A German sample letter to start a new template from. The § 19 UStG note,
   number, date and service period are part of the fixed layout, so the
-  sample does not repeat them.
+  sample does not repeat them. The due date is optional, so the sample
+  names it in a block that is left out without one.
   """
   def sample_template do
     %InvoiceTemplate{
@@ -84,7 +85,7 @@ defmodule PotionZeitgeist.Invoicing do
 
       {{positionen}}
 
-      Bitte überweisen Sie den Betrag von {{gesamtbetrag}} bis zum {{faellig_am}} unter Angabe der Rechnungsnummer {{rechnungsnummer}} auf das unten genannte Konto.
+      Bitte überweisen Sie den Betrag von {{gesamtbetrag}}{{#faellig_am}} bis zum {{faellig_am}}{{/faellig_am}} unter Angabe der Rechnungsnummer {{rechnungsnummer}} auf das unten genannte Konto.
 
       Mit freundlichen Grüßen
 
@@ -307,14 +308,20 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Copies recipient, template, tax, rates, descriptions, time sheet setting and
-  payment term of `base` into the form `params`. The month stays.
+  payment term of `base` into the form `params`. The month stays. Without a
+  due date on `base`, the new invoice has none either.
   """
   def apply_base(params, %Invoice{} = base) do
     base = Repo.preload(base, :items)
     invoice_date = parse_date(params["invoice_date"]) || base.invoice_date
 
-    payment_days =
-      if base.due_date, do: Date.diff(base.due_date, base.invoice_date), else: @payment_days
+    due_date =
+      if base.due_date,
+        do:
+          invoice_date
+          |> Date.add(Date.diff(base.due_date, base.invoice_date))
+          |> Date.to_iso8601(),
+        else: ""
 
     template_id =
       if base.template_id && Repo.get(InvoiceTemplate, base.template_id),
@@ -325,7 +332,7 @@ defmodule PotionZeitgeist.Invoicing do
       "base_id" => to_string(base.id),
       "template_id" => template_id,
       "recipient" => base.recipient,
-      "due_date" => invoice_date |> Date.add(payment_days) |> Date.to_iso8601(),
+      "due_date" => due_date,
       "tax_mode" => base.tax_mode,
       "vat_rate" =>
         if(base.tax_mode == "standard",
@@ -754,6 +761,7 @@ defmodule PotionZeitgeist.Invoicing do
     [
       Enum.any?(@sample_markers, &String.contains?(text, &1)) &&
         "The letter template still contains sample data (name, address, IBAN or tax number).",
+      due_date_gap(invoice, letter),
       last && number not in [nil, ""] && number != suggest_number(date || today()) &&
         "The suggested number after #{last.number} is #{suggest_number(date || today())}.",
       last && date && Date.compare(date, last.invoice_date) == :lt &&
@@ -761,6 +769,27 @@ defmodule PotionZeitgeist.Invoicing do
     ]
     |> Enum.filter(&is_binary/1)
     |> Enum.concat(layout_warnings(invoice, params))
+  end
+
+  @doc """
+  A hint when an invoice without a due date (or with `due_date` blank in
+  the form) has letter `texts` that print `{{faellig_am}}` outside a
+  `{{#faellig_am}}…{{/faellig_am}}` block, where it leaves a gap.
+  """
+  def due_date_gap(%Invoice{due_date: nil}, texts), do: due_date_gap(texts)
+  def due_date_gap(%Invoice{}, _texts), do: nil
+
+  def due_date_gap(nil), do: nil
+
+  def due_date_gap(texts) do
+    fields = [texts.sender, texts.tax_id, texts.subject, texts.body, texts.footer]
+
+    if Enum.any?(fields, &Letter.bare_placeholder?(&1, "faellig_am")) do
+      "Without a due date, the letter template prints a gap where it uses " <>
+        "#{Letter.tag("faellig_am")}. Put that text between " <>
+        "#{Letter.tag("#faellig_am")} and #{Letter.tag("/faellig_am")} in the template, " <>
+        "so it is left out on invoices without a due date."
+    end
   end
 
   # Texts too long for their place on the letter, measured as the letter will
@@ -777,7 +806,6 @@ defmodule PotionZeitgeist.Invoicing do
 
     texts = Letter.texts(invoice)
     vars = Letter.vars(invoice, texts)
-    fill = &Letter.fill(&1, vars)
 
     number =
       case LetterLayout.check_characters(invoice.number) do
@@ -786,13 +814,13 @@ defmodule PotionZeitgeist.Invoicing do
       end
 
     warnings =
-      for {box, text, fill, name} <- [
-            {:sender, texts.sender, fill, "The sender address of the template"},
-            {:recipient, invoice.recipient, &Function.identity/1, "The recipient"},
-            {:tax_id, texts.tax_id, fill, "The tax number line of the template"},
-            {:footer, texts.footer, fill, "The footer of the template"}
+      for {box, text, vars, name} <- [
+            {:sender, texts.sender, vars, "The sender address of the template"},
+            {:recipient, invoice.recipient, nil, "The recipient"},
+            {:tax_id, texts.tax_id, vars, "The tax number line of the template"},
+            {:footer, texts.footer, vars, "The footer of the template"}
           ],
-          message <- [layout_message(text, box, fill)],
+          message <- [layout_message(text, box, vars)],
           message != nil,
           do: {box, "#{name}#{message}."}
 
@@ -808,9 +836,19 @@ defmodule PotionZeitgeist.Invoicing do
   end
 
   # A text that fits as typed but not with the values of this invoice says
-  # so, since the cause can be a value such as the number of the form.
-  defp layout_message(text, box, fill) do
-    case {LetterLayout.check(text, box), LetterLayout.check(text, box, fill)} do
+  # so, since the cause can be a value such as the number of the form. The
+  # recipient has no placeholders (`vars` nil). As typed, blocks count with
+  # their text but without their tags, see `InvoiceTemplate`.
+  defp layout_message(text, box, nil) do
+    case LetterLayout.check(text, box) do
+      {:error, message} -> " " <> message
+      :ok -> nil
+    end
+  end
+
+  defp layout_message(text, box, vars) do
+    case {LetterLayout.check(text, box, &Letter.without_block_tags/1),
+          text |> Letter.fill_lines(vars) |> LetterLayout.check_lines(box)} do
       {{:error, message}, _filled} -> " " <> message
       {:ok, {:error, message}} -> ", with its placeholders filled in, " <> message
       {:ok, :ok} -> nil
