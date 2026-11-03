@@ -111,7 +111,8 @@ mix ecto.reset
 | `DATABASE_URL` | PostgreSQL connection string, e.g. `ecto://user:pass@host/db` |
 | `SECRET_KEY_BASE` | Phoenix secret key — generate with `mix phx.gen.secret` |
 | `VAULT_KEY` | 32-byte AES encryption key encoded as Base64 (see below) |
-| `PHX_HOST` | Public hostname, e.g. `example.com` |
+| `PHX_HOST` | Host names people use to open the app, comma-separated, e.g. `example.com` (default `localhost`) |
+| `FORCE_SSL` | `true` to redirect HTTP to HTTPS and send HSTS (behind a reverse proxy that sets `X-Forwarded-Proto`) |
 
 ### Generate a vault key
 
@@ -144,109 +145,129 @@ See the [Phoenix deployment guide](https://hexdocs.pm/phoenix/deployment.html) f
 
 ## Docker
 
-The application ships with a `Dockerfile` and `docker-compose.yml`. The database runs in a separate container with a named Docker volume so that **upgrading the application never touches the database data**.
+The Docker package brings everything the app needs: the app itself and its own PostgreSQL 16 database, started together by `docker-compose.yml`. You only need [Docker](https://docs.docker.com/get-docker/) (Docker Desktop on Windows and macOS), no Elixir, Node.js or PostgreSQL.
 
-Pre-built images are published to Docker Hub: [`siggijava/potion_zeitgeist`](https://hub.docker.com/r/siggijava/potion_zeitgeist)
+- **Your data survives updates.** It lives in two named Docker volumes, not in the containers: `potion_zeitgeist_postgres_data` (the database) and `potion_zeitgeist_app_data` (the keys). Updating, restarting or recreating the containers never touches them.
+- **Database changes are applied automatically.** On every start the app waits for the database, checks the encryption key and runs any pending migrations. Migrations extend the database; they don't reset it.
+- **Keys are generated on the first start** and kept in the app's volume, unless you set them yourself in `.env`.
+- Images are published for Intel/AMD and ARM (including Apple Silicon) as [`ghcr.io/siggijava/potion_zeitgeist`](https://github.com/SiggiJava/potion_zeitgeist/pkgs/container/potion_zeitgeist).
 
----
+### Install
 
-### Option A — Pull from Docker Hub (recommended)
+1. Create a folder, e.g. `potion_zeitgeist`, and save [`docker-compose.yml`](https://raw.githubusercontent.com/SiggiJava/potion_zeitgeist/main/docker-compose.yml) in it. Optionally save [`.env.example`](https://raw.githubusercontent.com/SiggiJava/potion_zeitgeist/main/.env.example) there as `.env` to change settings (see below).
+2. Open a terminal in that folder and start the app:
 
-No Elixir or Node.js toolchain required. Use the published image directly.
+   ```bash
+   docker compose up -d
+   ```
 
-#### 1. Create your `.env` file
+3. Open [http://localhost:4000](http://localhost:4000). On the first visit you are taken to `/setup`, where you create the administrator account.
+4. **Back up the keys right away** and keep the copy somewhere safe (not only on this computer):
 
-```bash
-cp .env.example .env
-```
+   ```bash
+   docker compose cp app:/app/data/secrets.env ./secrets.env.backup
+   ```
 
-Fill in the three required values (`SECRET_KEY_BASE`, `VAULT_KEY`, `PHX_HOST`). If you don't have an Elixir install to generate them, use these one-liners via Docker:
+   `VAULT_KEY` in that file encrypts the names and e-mail addresses in the database. A database backup is useless without it.
 
-```bash
-# Generate SECRET_KEY_BASE
-docker run --rm hexpm/elixir:1.16-erlang-26-alpine mix phx.gen.secret
+### Settings
 
-# Generate VAULT_KEY
-docker run --rm hexpm/elixir:1.16-erlang-26-alpine \
-  sh -c "iex -e ':crypto.strong_rand_bytes(32) |> Base.encode64() |> IO.puts()'"
-```
+Settings go into a file named `.env` next to `docker-compose.yml` (all optional, see `.env.example`). After changing it, run `docker compose up -d` again.
 
-#### 2. Start with the pre-built image
+| Variable | Default | Meaning |
+|---|---|---|
+| `PHX_HOST` | `localhost` | Host names or IP addresses used to open the app, separated by commas, e.g. `zeit.example.com,192.168.1.20`. The live pages (clocking in, dialogs, buttons) only work from these hosts and from localhost. |
+| `APP_PORT` | `4000` | Port on the computer running Docker. |
+| `FORCE_SSL` | `false` | `true` when the app is served over HTTPS by a reverse proxy: plain HTTP is then redirected to HTTPS. |
+| `APP_VERSION` | `latest` | Image version: `latest`, a release such as `1.2.0`, or `sha-<commit>`. |
+| `SECRET_KEY_BASE`, `VAULT_KEY` | generated | Set them only if you want to manage the keys yourself. Never change `VAULT_KEY` of an existing installation. |
+| `POSTGRES_PASSWORD` | `postgres` | Database password. Only used when the database volume is created for the first time; letters and digits only. The database is not reachable from outside Docker. |
 
-Replace the `build: .` line in `docker-compose.yml` with the Hub image, then start:
+**Using the app from other computers in your network:** open it with the address of the computer running Docker, e.g. `http://192.168.1.20:4000`, and put that address into `PHX_HOST` (e.g. `PHX_HOST=192.168.1.20`). Without it the pages load, but the live parts don't react.
 
-```yaml
-app:
-  image: siggijava/potion_zeitgeist:latest
-  # (remove the "build: ." line)
-```
+**HTTPS:** put a reverse proxy (e.g. Caddy, Traefik, nginx) in front of port 4000, set `PHX_HOST=your.domain` and `FORCE_SSL=true`. The proxy must send `X-Forwarded-Proto` and pass WebSocket connections on `/live`.
 
-```bash
-docker compose up
-```
-
-#### 3. Updating to a newer release
-
-```bash
-docker compose pull app
-docker compose up app
-```
-
-The `db` container and its volume are never touched during an update.
-
----
-
-### Option B — Build from source
-
-#### 1. Create your `.env` file
+### Update
 
 ```bash
-cp .env.example .env
+docker compose pull
+docker compose up -d
 ```
 
-Fill in the three required values:
+`pull` downloads the new image, `up -d` replaces the app container and leaves the database container and both volumes alone. The new version applies its database migrations by itself when it starts. Watch it with `docker compose logs -f app`.
+
+Making a backup first (see below) is a good habit. To stay on a version, set `APP_VERSION` in `.env`.
+
+### What keeps and what deletes your data
+
+| Command | Data |
+|---|---|
+| `docker compose up -d`, `restart`, `stop`, `down`, `pull` | kept |
+| Moving or renaming the folder with `docker-compose.yml` | kept (the volume names are fixed) |
+| `docker compose down -v`, `docker volume rm …`, `docker system prune --volumes` | **deleted** |
+
+The app keeps running with PostgreSQL 16. Don't change `postgres:16-alpine` in `docker-compose.yml` to a newer major version: it can't open the existing database. A major upgrade is a backup, a new volume and a restore.
+
+### Backup and restore
+
+Backup (database dump plus keys), written to the current folder:
 
 ```bash
-# Generate secret key base
-mix phx.gen.secret
-
-# Generate vault key
-iex -e ':crypto.strong_rand_bytes(32) |> Base.encode64() |> IO.puts()'
+docker compose exec -T db pg_dump -U postgres -Fc -f /tmp/backup.dump potion_zeitgeist_prod
+docker compose cp db:/tmp/backup.dump ./backup.dump
+docker compose cp app:/app/data/secrets.env ./secrets.env.backup
 ```
 
-#### 2. Start both containers
+Restore, e.g. on a new computer (with `docker-compose.yml`, `backup.dump` and `secrets.env.backup` in the folder):
 
 ```bash
-docker compose up --build
+# 1. The keys: add the lines of the key backup to .env
+cat secrets.env.backup >> .env
+# 2. Start only the database and load the dump into it
+docker compose up -d --wait db
+docker compose cp ./backup.dump db:/tmp/backup.dump
+docker compose exec -T db pg_restore -U postgres -d potion_zeitgeist_prod --clean --if-exists /tmp/backup.dump
+# 3. Start the app
+docker compose up -d
 ```
 
-The app container waits for PostgreSQL to be healthy, then runs all pending migrations automatically before starting the server.
+On Windows, use `type secrets.env.backup >> .env` in the Command Prompt or copy the lines with an editor. CI runs these exact commands on every change (`.github/scripts/docker-smoke-test.sh`).
 
-#### Updating the application
+### Build the image from the source code
 
-Rebuild and restart only the `app` container. The `db` container and its volume are untouched:
+In a clone of this repository, Docker Compose also reads `docker-compose.override.yml`, which builds the app image from the source instead of downloading it:
 
 ```bash
-docker compose up --build app
+git pull
+docker compose up -d --build
 ```
 
----
+The database and volumes are the same as with the published image. The build compiles the stylesheet and JavaScript into the image, so no separate asset rebuild is needed.
 
-### First-run admin setup
+### Coming from the earlier Docker setup
 
-Visit [http://localhost:4000/setup](http://localhost:4000/setup) to create the initial administrator account.
+- Keys you already have in `.env` (`SECRET_KEY_BASE`, `VAULT_KEY`) keep being used. Keep that `.env` file.
+- The database volume is now always called `potion_zeitgeist_postgres_data`. That is the name the earlier setup used when the folder was called `potion_zeitgeist`. If your folder had another name, `docker volume ls` shows the old volume as `<folder>_postgres_data`; move the data over with a backup and restore, or set `name:` under `volumes: postgres_data:` in `docker-compose.yml` to the old name.
 
-### Manual migration (if needed)
+### Troubleshooting
+
+- **The setup page appears although you had data:** the app is looking at an empty database volume, e.g. after `docker compose down -v` or with another volume name. Check `docker volume ls`.
+- **Buttons or live pages don't react when the app is opened by IP or host name:** add that address to `PHX_HOST`.
+- **The app does not start and the log says "VAULT_KEY does not match the data in the database":** the key is not the one the data was encrypted with. Put the original key back (from `secrets.env.backup` into `.env`). The data has not been changed.
+- See what the app does: `docker compose logs -f app`.
+
+### Manual migration and rollback
+
+Migrations run automatically on start. To run them by hand, or to roll back to a version:
 
 ```bash
-docker compose exec app ./bin/potion_zeitgeist eval "PotionZeitgeist.Release.migrate()"
+docker compose exec app bin/potion_zeitgeist eval "PotionZeitgeist.Release.migrate()"
+docker compose exec app bin/potion_zeitgeist eval "PotionZeitgeist.Release.rollback(PotionZeitgeist.Repo, <version>)"
 ```
 
-### Rollback a migration
+### Publishing images (maintainers)
 
-```bash
-docker compose exec app ./bin/potion_zeitgeist eval "PotionZeitgeist.Release.rollback(PotionZeitgeist.Repo, <version>)"
-```
+The CI workflow builds and tests the image for both platforms on every pull request. After a push to `main` it publishes `latest` and `sha-<commit>`, after a tag `v1.2.3` also `1.2.3`, `1.2` and `1`. A copy on Docker Hub is published as well when the repository variable `DOCKERHUB_USERNAME` and the secret `DOCKERHUB_TOKEN` are set.
 
 ---
 

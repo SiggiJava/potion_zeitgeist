@@ -24,16 +24,53 @@ config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :prod do
+  # Keys come from the environment. The Docker image also writes keys that
+  # were not set to $DATA_DIR/secrets.env on first start (docker-entrypoint.sh)
+  # and they are read from there, so every command in the container
+  # (server, eval, remote) uses the same keys.
+  stored_secrets =
+    with dir when is_binary(dir) and dir != "" <- System.get_env("DATA_DIR"),
+         {:ok, content} <- File.read(Path.join(dir, "secrets.env")) do
+      for line <- String.split(content, ["\r\n", "\n"]),
+          not String.starts_with?(String.trim_leading(line), "#"),
+          [key, value] <- [String.split(line, "=", parts: 2)],
+          into: %{},
+          do: {String.trim(key), String.trim(value)}
+    else
+      _ -> %{}
+    end
+
+  # An empty variable (e.g. `VAULT_KEY=` in .env) counts as not set.
+  present = fn value ->
+    value = String.trim(value || "")
+    if value != "", do: value
+  end
+
+  secret = fn name -> present.(System.get_env(name)) || present.(stored_secrets[name]) end
+
   vault_key =
-    System.get_env("VAULT_KEY") ||
+    secret.("VAULT_KEY") ||
       raise """
       environment variable VAULT_KEY is missing.
       Generate one with: :crypto.strong_rand_bytes(32) |> Base.encode64() |> IO.puts()
       """
 
+  vault_key =
+    case Base.decode64(vault_key) do
+      {:ok, <<_::binary-size(32)>> = key} ->
+        key
+
+      _ ->
+        raise """
+        environment variable VAULT_KEY is not a valid key.
+        It must be 32 random bytes encoded as Base64 (44 characters ending in "=").
+        Generate one with: :crypto.strong_rand_bytes(32) |> Base.encode64() |> IO.puts()
+        """
+    end
+
   config :potion_zeitgeist, PotionZeitgeist.Vault,
     ciphers: [
-      default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: Base.decode64!(vault_key)}
+      default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: vault_key}
     ]
 
   database_url =
@@ -59,18 +96,73 @@ if config_env() == :prod do
   # to check this value into version control, so we use an environment
   # variable instead.
   secret_key_base =
-    System.get_env("SECRET_KEY_BASE") ||
+    secret.("SECRET_KEY_BASE") ||
       raise """
       environment variable SECRET_KEY_BASE is missing.
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  # PHX_HOST: the host names or IP addresses people type in the browser to
+  # open the app, separated by commas, e.g. "zeit.example.com,192.168.1.20".
+  # The first one is used for generated URLs. The live pages only connect
+  # from these hosts (and from localhost), which protects against other
+  # websites talking to the app in a user's name.
+  hosts =
+    (System.get_env("PHX_HOST") || "")
+    |> String.split([",", " "], trim: true)
+    # Tolerate "http://zeit.example.com" or "192.168.1.20:4000": keep the host.
+    |> Enum.map(fn entry ->
+      cond do
+        String.contains?(entry, "://") -> URI.parse(entry).host
+        String.starts_with?(entry, "[") -> URI.parse("//" <> entry).host
+        # a bare IPv6 address such as fe80::1
+        length(String.split(entry, ":")) > 2 -> entry
+        true -> URI.parse("//" <> entry).host
+      end
+    end)
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> case do
+      [] -> ["localhost"]
+      hosts -> Enum.uniq(hosts)
+    end
+
+  # FORCE_SSL=true: redirect plain HTTP to HTTPS and send HSTS. Use it when
+  # the app is served over HTTPS (usually by a reverse proxy that sets
+  # X-Forwarded-Proto). Without it the app answers plain HTTP, e.g. on
+  # http://192.168.1.20:4000 in a local network.
+  force_ssl? = System.get_env("FORCE_SSL") in ~w(true 1)
+
+  # Read by PotionZeitgeistWeb.Plugs.ForceSSL. localhost stays reachable over plain
+  # HTTP for the container's health check.
+  config :potion_zeitgeist,
+         :force_ssl,
+         force_ssl? &&
+           [
+             rewrite_on: [:x_forwarded_proto],
+             host: nil,
+             exclude: [hosts: ["localhost", "127.0.0.1"]]
+           ]
+
+  url =
+    if force_ssl?,
+      do: [host: hd(hosts), port: 443, scheme: "https"],
+      else: [
+        host: hd(hosts),
+        port: String.to_integer(System.get_env("PORT", "4000")),
+        scheme: "http"
+      ]
+
+  # "//host" accepts that host with any scheme and port.
+  check_origin =
+    for host <- Enum.uniq(hosts ++ ["localhost", "127.0.0.1"]) do
+      if String.contains?(host, ":"), do: "//[#{host}]", else: "//#{host}"
+    end
 
   config :potion_zeitgeist, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
+    url: url,
+    check_origin: check_origin,
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
@@ -104,13 +196,9 @@ if config_env() == :prod do
   # "priv/ssl/server.key". For all supported SSL configuration
   # options, see https://hexdocs.pm/plug/Plug.SSL.html#configure/1
   #
-  # We also recommend setting `force_ssl` in your config/prod.exs,
-  # ensuring no data is ever sent via http, always redirecting to https:
-  #
-  #     config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
-  #       force_ssl: [hsts: true]
-  #
-  # Check `Plug.SSL` for all available options in `force_ssl`.
+  # Redirecting HTTP to HTTPS is switched on with FORCE_SSL=true (see above
+  # and PotionZeitgeistWeb.Plugs.ForceSSL), not with the endpoint's compile-time
+  # `force_ssl` option, so the same Docker image works with and without HTTPS.
 
   # ## Configuring the mailer
   #

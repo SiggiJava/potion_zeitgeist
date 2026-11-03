@@ -1,6 +1,12 @@
 defmodule PotionZeitgeistWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :potion_zeitgeist
 
+  # GET /health for the Docker health check, before logging and sessions.
+  plug PotionZeitgeistWeb.Plugs.Health
+
+  # HTTP -> HTTPS redirect, only with FORCE_SSL=true (config/runtime.exs).
+  plug PotionZeitgeistWeb.Plugs.ForceSSL
+
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.

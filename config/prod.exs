@@ -8,17 +8,10 @@ import Config
 config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json"
 
-# Force using SSL in production. This also sets the "strict-security-transport" header,
-# known as HSTS. If you have a health check endpoint, you may want to exclude it below.
-# Note `:force_ssl` is required to be set at compile-time.
-config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
-  force_ssl: [
-    rewrite_on: [:x_forwarded_proto],
-    exclude: [
-      # paths: ["/health"],
-      hosts: ["localhost", "127.0.0.1"]
-    ]
-  ]
+# Redirecting HTTP to HTTPS (with HSTS) is decided when the app starts, with
+# FORCE_SSL=true in config/runtime.exs. The endpoint's `:force_ssl` option would
+# be fixed at compile time, and the same Docker image must also serve plain
+# HTTP, e.g. on http://192.168.1.20:4000 in a local network.
 
 # Configure Swoosh API Client
 config :swoosh, api_client: Swoosh.ApiClient.Req
