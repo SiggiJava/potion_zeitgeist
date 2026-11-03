@@ -500,12 +500,16 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
         <h1 class="text-2xl font-bold">{@page_title}</h1>
       </div>
 
+      <%!-- The server checks the fields. A date field emptied only in part
+           (one segment cleared in Safari) is invalid to the browser, which
+           would refuse to send the form, so the draft could not be saved. --%>
       <.form
         for={@form}
         id="invoice-form"
         phx-change="validate"
         phx-submit="save"
         phx-auto-recover="recover"
+        novalidate
       >
         <input type="hidden" name="invoice[entry_ids][]" value="" />
 

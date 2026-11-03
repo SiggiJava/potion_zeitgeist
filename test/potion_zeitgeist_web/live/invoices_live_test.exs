@@ -64,6 +64,9 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
   test "an invoice can leave out the due date", ctx do
     template = template_fixture(%{"body" => "{{positionen}}\n\nZahlbar bis zum {{faellig_am}}."})
     {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/new")
+    # A date field emptied only in part (Safari) is invalid to the browser,
+    # which would not send the form, so only the server checks the fields.
+    assert has_element?(view, "#invoice-form[novalidate]")
 
     view |> form("#invoice-form", invoice: %{month: "2026-10"}) |> render_change()
     view |> element("#toggle-group-#{ctx.project.id}") |> render_click()
@@ -80,7 +83,9 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     view |> form("#invoice-form", invoice: %{due_date: "2026-11-30"}) |> render_change()
     assert has_element?(view, "#remove-due-date")
     refute has_element?(view, "#due-date-gap")
-    view |> element("#remove-due-date") |> render_click()
+    # Emptied with the keyboard, the field sends an empty value.
+    view |> form("#invoice-form", invoice: %{due_date: ""}) |> render_change()
+    assert has_element?(view, "#no-due-date")
     assert has_element?(view, "#due-date-gap")
 
     # Fixed in another tab, the template no longer leaves a gap.
