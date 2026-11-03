@@ -31,5 +31,61 @@
   </head>
   <body class="bg-base-200 min-h-screen">
     {@inner_content}
+    <%!-- Shown by the script below when app.css has no rule for an icon that
+         the pages use, so the stylesheet is older than the code. Styled
+         inline because app.css is the file that is outdated then. See
+         PotionZeitgeistWeb.StylesheetCheck. --%>
+    <div
+      id="stylesheet-outdated"
+      role="alert"
+      hidden
+      data-icons={Enum.join(PotionZeitgeistWeb.StylesheetCheck.icons(), " ")}
+      style="position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147483647; padding: 12px 56px 12px 16px; background: #b91c1c; color: #ffffff; font: 14px/1.5 system-ui, -apple-system, sans-serif;"
+    >
+      <strong>This page was loaded with an outdated stylesheet,</strong>
+      so some icons and styles are missing. First reload the page without the cache
+      (Safari: Option+Command+R, Chrome on a Mac: Shift+Command+R, Windows: Ctrl+F5).
+      If this note stays, rebuild the stylesheet on the server and restart the app:
+      <code>mix assets.build</code>
+      when started with <code>mix phx.server</code>, <code>mix assets.deploy</code>
+      when started with MIX_ENV=prod, <code>docker compose up --build app</code>
+      with Docker.
+      <button
+        type="button"
+        aria-label="Close"
+        style="position: absolute; top: 8px; right: 12px; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 20px; line-height: 1.5; cursor: pointer;"
+      >
+        &times;
+      </button>
+    </div>
+    <script>
+      (() => {
+        const notice = document.getElementById("stylesheet-outdated");
+        const icons = notice ? notice.dataset.icons.split(" ").filter(Boolean) : [];
+        const supported =
+          window.CSS && CSS.supports &&
+          (CSS.supports("mask-image", "none") || CSS.supports("-webkit-mask-image", "none"));
+        if (icons.length === 0 || !supported) return;
+
+        // Every hero-* rule of app.css sets a mask image. An icon without one
+        // has no rule, so the stylesheet was built before the icon was used.
+        const hasMask = (value) => typeof value === "string" && value.includes("url(");
+        const probe = document.createElement("span");
+        probe.setAttribute("aria-hidden", "true");
+        probe.style.cssText = "position: absolute; visibility: hidden; pointer-events: none;";
+        document.body.appendChild(probe);
+        const missing = icons.filter((icon) => {
+          probe.className = icon;
+          const style = getComputedStyle(probe);
+          return !hasMask(style.maskImage) && !hasMask(style.webkitMaskImage);
+        });
+        probe.remove();
+        if (missing.length === 0) return;
+
+        notice.dataset.missing = missing.join(" ");
+        notice.querySelector("button").addEventListener("click", () => { notice.hidden = true; });
+        notice.hidden = false;
+      })();
+    </script>
   </body>
 </html>
