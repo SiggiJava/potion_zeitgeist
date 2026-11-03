@@ -347,9 +347,15 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
 
     view |> element("#toggle-group-#{ctx.project.id}") |> render_click()
 
+    # The browser sends the selected entries with the form; with time to
+    # bill, the hourly rate is needed.
     html =
       render_submit(view, "save", %{
-        "invoice" => %{"recipient" => "Kunde GmbH", "hourly_rate" => ""}
+        "invoice" => %{
+          "recipient" => "Kunde GmbH",
+          "hourly_rate" => "",
+          "entry_ids" => ["", to_string(hd(ctx.entries).id)]
+        }
       })
 
     assert html =~ "needs the name and the full address"
