@@ -7,10 +7,14 @@
 #    container keep using the same keys. config/runtime.exs reads that file.
 # 2. Database: waits until it is reachable, refuses to start when VAULT_KEY
 #    cannot read the data already stored, then runs pending migrations.
+#    Keys given in the environment are then also recorded in secrets.env, so
+#    a backup of that file always holds the keys in use.
 # 3. Starts the server.
 #
-# Any arguments are run as a command instead of the server, with the keys
-# prepared, e.g.: docker compose run --rm app bin/potion_zeitgeist remote
+# Any arguments are run as a one-off command instead of the server, with the
+# keys prepared, e.g.:
+#   docker compose run --rm app bin/potion_zeitgeist eval "PotionZeitgeist.Release.migrate()"
+# (For a shell on the running server use: docker compose exec app bin/potion_zeitgeist remote)
 set -eu
 
 DATA_DIR="${DATA_DIR:-/app/data}"
@@ -28,16 +32,40 @@ stored_secret() {
   fi
 }
 
+# Prints the value of the environment variable named $1 without whitespace.
+env_secret() {
+  eval "value=\${$1:-}"
+  printf '%s' "$value" | tr -d '[:space:]'
+}
+
+secrets_header() {
+  echo "# Potion Zeitgeist keys. Keep a copy of this file in a safe place."
+  echo "# VAULT_KEY decrypts the names and e-mail addresses in the database:"
+  echo "# without it they cannot be read. The app reads this file on every start."
+}
+
+# True when a volume (or bind mount) is mounted on $DATA_DIR.
+data_dir_mounted() {
+  awk -v dir="$DATA_DIR" '$5 == dir { found = 1 } END { exit !found }' /proc/self/mountinfo
+}
+
 # Makes sure the key named $1 exists: in the environment or in the secrets
 # file. Otherwise generates $2 random bytes, Base64 encoded, into the file.
 ensure_secret() {
   name="$1"
   bytes="$2"
-  eval "value=\${$name:-}"
-  value="$(printf '%s' "$value" | tr -d '[:space:]')"
 
-  if [ -n "$value" ] || [ -n "$(stored_secret "$name")" ]; then
+  if [ -n "$(env_secret "$name")" ] || [ -n "$(stored_secret "$name")" ]; then
     return 0
+  fi
+
+  # Keys generated inside the container itself would be gone, and the data
+  # they encrypt unreadable, as soon as the container is replaced by an update.
+  if ! data_dir_mounted; then
+    echo "[entrypoint] ERROR: $name is not set and no volume is mounted on $DATA_DIR." >&2
+    echo "[entrypoint] Keys generated now would be lost with the next update of the container." >&2
+    echo "[entrypoint] Mount a volume on $DATA_DIR (docker-compose.yml does this), or set $name." >&2
+    exit 1
   fi
 
   if ! touch "$SECRETS_FILE" 2>/dev/null; then
@@ -47,15 +75,39 @@ ensure_secret() {
   fi
 
   if [ ! -s "$SECRETS_FILE" ]; then
-    {
-      echo "# Potion Zeitgeist keys, generated on the first start of the container."
-      echo "# Keep a copy of this file in a safe place. VAULT_KEY decrypts the names"
-      echo "# and e-mail addresses in the database: without it they cannot be read."
-    } >>"$SECRETS_FILE"
+    secrets_header >>"$SECRETS_FILE"
   fi
 
   printf '%s=%s\n' "$name" "$(head -c "$bytes" /dev/urandom | base64 -w 0)" >>"$SECRETS_FILE"
   GENERATED="$GENERATED $name"
+}
+
+# Records the key named $1 from the environment in the secrets file when the
+# file holds no or another value. Only called after Release.setup() accepted
+# VAULT_KEY for the stored data. A replaced value stays as a comment.
+record_env_secret() {
+  name="$1"
+  value="$(env_secret "$name")"
+
+  if [ -z "$value" ] || [ "$value" = "$(stored_secret "$name")" ]; then
+    return 0
+  fi
+
+  if ! touch "$SECRETS_FILE" 2>/dev/null; then
+    log "Note: could not record $name in $SECRETS_FILE; keep your .env as the key backup."
+    return 0
+  fi
+
+  {
+    if [ -s "$SECRETS_FILE" ]; then
+      sed "s/^$name=/# replaced on $(date -u +%Y-%m-%d), not used: $name=/" "$SECRETS_FILE"
+    else
+      secrets_header
+    fi
+    printf '%s=%s\n' "$name" "$value"
+  } >"$SECRETS_FILE.new"
+  mv "$SECRETS_FILE.new" "$SECRETS_FILE"
+  log "Recorded $name from the environment in $SECRETS_FILE."
 }
 
 umask 077
@@ -80,6 +132,9 @@ fi
 
 log "Checking the database and running migrations..."
 "$RELEASE_BIN" eval "PotionZeitgeist.Release.setup()"
+
+record_env_secret SECRET_KEY_BASE
+record_env_secret VAULT_KEY
 
 log "Starting Potion Zeitgeist on port ${PORT:-4000}..."
 exec "$RELEASE_BIN" start

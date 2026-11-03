@@ -9,9 +9,9 @@ config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json"
 
 # Redirecting HTTP to HTTPS (with HSTS) is decided when the app starts, with
-# FORCE_SSL=true in config/runtime.exs. The endpoint's `:force_ssl` option would
-# be fixed at compile time, and the same Docker image must also serve plain
-# HTTP, e.g. on http://192.168.1.20:4000 in a local network.
+# FORCE_SSL in config/runtime.exs (on unless FORCE_SSL=false). The endpoint's
+# `:force_ssl` option would be fixed at compile time, and the Docker image must
+# also serve plain HTTP, e.g. on http://192.168.1.20:4000 in a local network.
 
 # Configure Swoosh API Client
 config :swoosh, api_client: Swoosh.ApiClient.Req

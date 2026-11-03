@@ -69,6 +69,7 @@ ENV LANG=C.UTF-8 \
     MIX_ENV=prod \
     PHX_SERVER=true \
     PORT=4000 \
+    FORCE_SSL=false \
     DATA_DIR=/app/data
 
 # Run as an unprivileged user. /app/data holds the keys generated on first

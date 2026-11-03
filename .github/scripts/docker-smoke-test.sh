@@ -17,6 +17,10 @@ ADMIN_NAME="Zeit Prüferin"
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=smoke-test-password-123
 
+# An own project name (and with it own volumes), so the test never touches a
+# real installation's containers or data on the same machine.
+export COMPOSE_PROJECT_NAME="pzsmoke$$"
+
 SOURCE_DIR="$(pwd)"
 WORK="$(mktemp -d)"
 cp docker-compose.yml "$WORK/"
@@ -189,31 +193,54 @@ login_and_check
 step "A different VAULT_KEY is refused and the data stays readable"
 set_env VAULT_KEY "$(head -c 32 /dev/urandom | base64 -w 0)"
 dc up -d app
+restarts() { docker inspect -f '{{.RestartCount}}' "$(app_container)"; }
 for _ in $(seq 1 60); do
-  app_logs_contain "VAULT_KEY does not match the data in the database" && break
+  app_logs_contain "VAULT_KEY does not match the data in the database" && [ "$(restarts)" -ge 1 ] && break
   sleep 2
 done
 app_logs_contain "VAULT_KEY does not match the data in the database" || fail "wrong key not reported"
+[ "$(restarts)" -ge 1 ] || fail "app did not stop with a wrong key"
 [ "$(status_of "$BASE/health")" != "200" ] || fail "app runs with a wrong key"
 set_env VAULT_KEY ""
 up
 login_and_check
 
-step "Backup, then restore into a new installation (README commands)"
+step "Backup (README commands)"
 dc exec -T db pg_dump -U postgres -Fc -f /tmp/backup.dump potion_zeitgeist_prod
 dc cp db:/tmp/backup.dump ./backup.dump
 dc cp app:/app/data/secrets.env ./secrets.env.backup
 [ -s backup.dump ] || fail "empty backup"
+vault_key="$(sed -n 's/^VAULT_KEY=//p' secrets.env.backup)"
+[ -n "$vault_key" ] || fail "no VAULT_KEY in the key backup"
+
+# The README "Restore" commands.
+restore() {
+  up db
+  dc stop app
+  dc exec -T db dropdb -U postgres --if-exists --force potion_zeitgeist_prod
+  dc exec -T db createdb -U postgres potion_zeitgeist_prod
+  dc cp ./backup.dump db:/tmp/backup.dump
+  dc exec -T db pg_restore -U postgres -d potion_zeitgeist_prod --exit-on-error /tmp/backup.dump
+  up
+}
+
+step "Restore into the existing installation"
+restore
+login_and_check
+
+step "Restore on a new computer where the app was already started once"
 dc down -v
-[ -z "$(docker volume ls -q --filter name=potion_zeitgeist_)" ] || fail "volumes not removed by down -v"
+[ -z "$(docker volume ls -q --filter "name=${COMPOSE_PROJECT_NAME}_")" ] || fail "volumes not removed by down -v"
+set_env VAULT_KEY ""
+up
+app_logs_contain "New keys generated" || fail "new installation did not generate keys"
 # README: put the lines of the key backup into .env.
 sed -i '/^SECRET_KEY_BASE=/d; /^VAULT_KEY=/d' .env
 cat secrets.env.backup >>.env
-up db
-dc cp ./backup.dump db:/tmp/backup.dump
-dc exec -T db pg_restore -U postgres -d potion_zeitgeist_prod --clean --if-exists /tmp/backup.dump
-up
-app_logs_contain "New keys generated" && fail "keys generated although .env has them"
+restore
 login_and_check
+app_logs_contain "Recorded VAULT_KEY from the environment" || fail "restored key not recorded"
+dc cp app:/app/data/secrets.env ./secrets.env.new
+grep -qx "VAULT_KEY=$vault_key" secrets.env.new || fail "the key backup file does not hold the key in use"
 
 step "All Docker checks passed"

@@ -11,6 +11,13 @@
 # In a clone of the repository, docker-compose.override.yml is picked up as
 # well, and `docker compose up -d --build` builds the image from the source.
 
+# A fixed project name: the containers and the volumes
+# potion_zeitgeist_postgres_data and potion_zeitgeist_app_data keep their
+# names when this file is moved to another folder, so the same installation
+# is found again. A second, separate installation on the same computer needs
+# its own name: COMPOSE_PROJECT_NAME=<other name> in its .env.
+name: potion_zeitgeist
+
 services:
   db:
     # Stay on PostgreSQL 16: a newer major version cannot open this data
@@ -25,7 +32,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d potion_zeitgeist_prod"]
+      # Over TCP: the temporary server of the first initialisation only
+      # listens on the socket and must not count as ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d potion_zeitgeist_prod"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -50,9 +59,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  # Fixed names, so the data is found again even when this file is moved to
-  # another folder (Compose would otherwise prefix the folder name).
   postgres_data:
-    name: potion_zeitgeist_postgres_data
   app_data:
-    name: potion_zeitgeist_app_data

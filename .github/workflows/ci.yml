@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request cancels the older run, so an
+# older commit can never publish "latest" after a newer one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-24.04
@@ -151,10 +157,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    concurrency:
-      group: docker-publish-${{ github.ref }}
-      cancel-in-progress: false
-
     steps:
       # Optional copy on Docker Hub: set the repository variable
       # DOCKERHUB_USERNAME and the secret DOCKERHUB_TOKEN to enable it.
@@ -199,6 +201,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.images.outputs.list }}
+          # "latest" only from main, not from version tags.
+          flavor: |
+            latest=false
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,enable={{is_default_branch}}
@@ -221,5 +226,5 @@ jobs:
         run: |
           docker logout ghcr.io
           if ! docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}" >/dev/null; then
-            echo "::warning::$IMAGE cannot be downloaded without login. Make the package public: GitHub profile > Packages > potion_zeitgeist > Package settings > Change visibility."
+            echo "::warning::$IMAGE cannot be downloaded without login. Make the package public once: GitHub profile > Packages > potion_zeitgeist > Package settings > Change visibility > Public."
           fi

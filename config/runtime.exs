@@ -121,19 +121,22 @@ if config_env() == :prod do
       end
     end)
     |> Enum.reject(&(&1 in [nil, ""]))
+    # Browsers send the host in lower case.
+    |> Enum.map(&String.downcase/1)
     |> case do
       [] -> ["localhost"]
       hosts -> Enum.uniq(hosts)
     end
 
-  # FORCE_SSL=true: redirect plain HTTP to HTTPS and send HSTS. Use it when
-  # the app is served over HTTPS (usually by a reverse proxy that sets
-  # X-Forwarded-Proto). Without it the app answers plain HTTP, e.g. on
-  # http://192.168.1.20:4000 in a local network.
-  force_ssl? = System.get_env("FORCE_SSL") in ~w(true 1)
+  # FORCE_SSL=true (the default): redirect plain HTTP to HTTPS and send HSTS,
+  # for an app served over HTTPS, usually by a reverse proxy that sets
+  # X-Forwarded-Proto. FORCE_SSL=false lets the app answer plain HTTP, e.g. on
+  # http://192.168.1.20:4000 in a local network; the Docker image sets that.
+  force_ssl? = System.get_env("FORCE_SSL", "true") in ~w(true 1)
 
-  # Read by PotionZeitgeistWeb.Plugs.ForceSSL. localhost stays reachable over plain
-  # HTTP for the container's health check.
+  # Read by PotionZeitgeistWeb.Plugs.ForceSSL. Requests for localhost stay on
+  # plain HTTP (Plug.SSL's default), so the app can be reached directly on the
+  # machine it runs on; a proxy must forward the original Host header.
   config :potion_zeitgeist,
          :force_ssl,
          force_ssl? &&

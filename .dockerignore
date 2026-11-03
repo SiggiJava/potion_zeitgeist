@@ -6,6 +6,8 @@
 .elixir_ls
 .env
 .env.*
+secrets.env*
+*.dump
 *.md
 Dockerfile
 .dockerignore
