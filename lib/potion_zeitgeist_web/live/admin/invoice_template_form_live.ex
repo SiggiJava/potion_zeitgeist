@@ -34,7 +34,14 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
      )
      |> assign(:template, template)
      |> assign(:today, today)
+     |> assign(:preview_due_date?, true)
      |> assign_form(changeset)}
+  end
+
+  @impl true
+  def handle_event("toggle_preview_due_date", _params, socket) do
+    socket = assign(socket, :preview_due_date?, not socket.assigns.preview_due_date?)
+    {:noreply, assign_preview(socket, Ecto.Changeset.apply_changes(socket.assigns.form.source))}
   end
 
   @impl true
@@ -72,8 +79,28 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
 
     socket
     |> assign(:form, to_form(changeset))
-    |> assign(:preview, Letter.sample(template, socket.assigns.today))
     |> assign(:missing_items?, not Letter.has_items_placeholder?(template.body))
+    |> assign_preview(template)
+  end
+
+  defp assign_preview(socket, template) do
+    %{today: today, preview_due_date?: due_date?} = socket.assigns
+    assign(socket, :preview, Letter.sample(template, today, due_date: due_date?))
+  end
+
+  defp block_tags do
+    [
+      {"#{Letter.tag("#faellig_am")} … #{Letter.tag("/faellig_am")}",
+       "Text only on invoices with a due date"},
+      {"#{Letter.tag("^faellig_am")} … #{Letter.tag("/faellig_am")}",
+       "Text only on invoices without a due date"},
+      {"#{Letter.tag("#ust")} … #{Letter.tag("/ust")}", "Text only on invoices with VAT"}
+    ]
+  end
+
+  defp block_example do
+    "… von #{Letter.tag("gesamtbetrag")}#{Letter.tag("#faellig_am")} bis zum " <>
+      "#{Letter.tag("faellig_am")}#{Letter.tag("/faellig_am")} unter Angabe …"
   end
 
   defp sample_attrs do
@@ -165,6 +192,22 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
                   <dd class="text-base-content/70">{description}</dd>
                 <% end %>
               </dl>
+              <h2 class="font-semibold mt-4">Text that depends on a value</h2>
+              <dl id="blocks-help" class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                <%= for {block, description} <- block_tags() do %>
+                  <dt><code class="text-primary">{block}</code></dt>
+                  <dd class="text-base-content/70">{description}</dd>
+                <% end %>
+              </dl>
+              <p class="mt-2 text-sm text-base-content/60">
+                This works with every placeholder: the text prints when it has a value. A
+                block starts and ends on the same line. A line with nothing else is left
+                out when its text does not print. For example, this names the due date
+                only when there is one:
+              </p>
+              <p id="block-example" class="mt-1 text-sm font-mono text-base-content/70 break-words">
+                {block_example()}
+              </p>
               <p class="mt-3 text-sm text-base-content/60">
                 Your address, the tax number line, the recipient, invoice number, date,
                 service period, items and totals are always printed. Without VAT, the
@@ -175,7 +218,18 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplateFormLive do
         </div>
 
         <div>
-          <h2 class="font-semibold mb-2">Preview with sample data</h2>
+          <div class="flex items-center justify-between gap-3 mb-2">
+            <h2 class="font-semibold">Preview with sample data</h2>
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                id="preview-due-date"
+                checked={@preview_due_date?}
+                phx-click="toggle_preview_due_date"
+                class="checkbox checkbox-sm"
+              /> With due date
+            </label>
+          </div>
           <div class="overflow-hidden rounded-box bg-base-300 p-4">
             <div class="[zoom:0.62] origin-top">
               <.letter id="template-preview" letter={@preview} />

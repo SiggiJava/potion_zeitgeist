@@ -7,6 +7,13 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   Unknown placeholders stay as they are, so a typo is visible in the preview.
   `{{positionen}}` in the body marks where the table of items goes.
 
+  Text in a block such as `{{#faellig_am}} bis zum {{faellig_am}}{{/faellig_am}}`
+  prints only when its placeholder has a value, text in
+  `{{^faellig_am}}…{{/faellig_am}}` only when it has none, so a template
+  works for invoices with and without a due date. A block opens and closes
+  on one line. A line that holds nothing but blocks that are left out is
+  left out too, and with it the blank line that set it apart as a paragraph.
+
   The parts German invoices must always show are part of the fixed layout,
   not of the template text: sender, tax number, recipient, number, date,
   service period, items, totals and, for small businesses, the § 19 UStG note.
@@ -15,9 +22,16 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice, LetterLayout}
 
   # A placeholder stays on one line, so each line of a text can be filled
-  # (and measured, see `PotionZeitgeist.Invoicing.LetterLayout.check/3`) on its own.
+  # (and measured, see `PotionZeitgeist.Invoicing.LetterLayout.check_lines/2`)
+  # on its own.
   @placeholder ~r/\{\{[ \t]*([a-z_]+)[ \t]*\}\}/
   @items_placeholder ~r/\{\{\s*positionen\s*\}\}/
+
+  # A block with its opening tag ("#" prints with a value, "^" without),
+  # name and text, up to the first closing tag of the same name.
+  @block ~r/\{\{[ \t]*([#^])[ \t]*([a-z_]+)[ \t]*\}\}(.*?)\{\{[ \t]*\/[ \t]*\2[ \t]*\}\}/
+  @block_tag ~r/\{\{[ \t]*([#^\/])[ \t]*([a-z_]+)[ \t]*\}\}/
+  @line_break ~r/\r\n|\n|\r/
 
   # A postcode line such as "12345 Musterstadt", "D-12345 Musterstadt" or "A-1010 Wien".
   @postcode_line ~r/^([A-Z]{1,2}-)?\d{4,5}\s/u
@@ -40,6 +54,10 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     {"steuernummer", "Your tax number line"}
   ]
 
+  # Placeholders that have a value of their own, which a block can depend on.
+  # `{{positionen}}` is the place of the table of items, not a value.
+  @block_names for {name, _description} <- @placeholders, name != "positionen", do: name
+
   @doc "Placeholder names with a short description, for the template editor."
   def placeholders, do: @placeholders
 
@@ -48,11 +66,226 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   def small_business_note, do: @small_business_note
 
-  @doc "Replaces known placeholders in `text` with values from `vars`."
+  @doc """
+  Replaces known placeholders in `text` with values from `vars`, and keeps
+  or leaves out the text of its blocks, see the module documentation.
+  """
   def fill(nil, _vars), do: ""
 
   def fill(text, vars) do
-    Regex.replace(@placeholder, text, fn whole, name -> Map.get(vars, name, whole) end)
+    text
+    |> filled_lines(vars)
+    |> Enum.map_join(fn {line, break, _number} -> line <> break end)
+  end
+
+  @doc """
+  The lines of `text` as `fill/2` prints them, each with its number in
+  `text`, for measuring them (see
+  `PotionZeitgeist.Invoicing.LetterLayout.check_lines/2`). A filled in
+  value can hold line breaks of its own.
+  """
+  def fill_lines(text, vars), do: numbered(filled_lines(text || "", vars))
+
+  @doc """
+  Like `fill_lines/2`, but with the placeholders as typed: the blocks print
+  or are left out as with `vars`. A placeholder can be longer or shorter
+  than its value, so the line limits are checked both ways.
+  """
+  def typed_lines(text, vars), do: numbered(filled_lines(text || "", %{}, has_value(vars)))
+
+  # Texts with more block names than this are measured as typed with the
+  # text of all their blocks (more lines than any of them prints), instead
+  # of once for each way their blocks can print.
+  @max_variant_names 6
+
+  @doc """
+  The lines of `text` as `typed_lines/2` gives them, once for each way its
+  blocks can print: each block name it uses with and without a value. For
+  checking the line limits of a template, whatever invoice it prints.
+  """
+  def typed_variants(text) do
+    text = text || ""
+    names = @block_tag |> Regex.scan(text) |> Enum.map(&List.last/1) |> Enum.uniq()
+    names = Enum.filter(names, &(&1 in @block_names))
+
+    if length(names) > @max_variant_names do
+      numbered_lines = text |> lines() |> Enum.with_index(1)
+      [for({line, number} <- numbered_lines, do: {without_block_tags(line), number})]
+    else
+      for with_value <- subsets(names) do
+        decide = &if(&1 in @block_names, do: &1 in with_value, else: :unknown)
+        numbered(filled_lines(text, %{}, decide))
+      end
+    end
+  end
+
+  defp subsets(names) do
+    Enum.reduce(names, [[]], fn name, subsets -> subsets ++ Enum.map(subsets, &[name | &1]) end)
+  end
+
+  defp numbered(filled_lines), do: for({line, _break, number} <- filled_lines, do: {line, number})
+
+  # Whether the placeholder `name` has a value in `vars`, `:unknown` for
+  # names that are no placeholders.
+  defp has_value(vars) do
+    fn name ->
+      case Map.fetch(vars, name) do
+        {:ok, value} -> not blank?(value)
+        :error -> :unknown
+      end
+    end
+  end
+
+  # Each line of `text` filled in, with the line break after it and its
+  # number in `text`, without the lines that only held left out blocks.
+  # `decide` tells for each block name whether it has a value.
+  defp filled_lines(text, vars), do: filled_lines(text, vars, has_value(vars))
+
+  defp filled_lines(text, vars, decide) do
+    @line_break
+    |> Regex.split(text, include_captures: true)
+    |> with_breaks(1)
+    |> Enum.map(fn {line, break, number} ->
+      case fill_blocks(line, decide) do
+        ^line ->
+          {:keep, fill_placeholders(line, vars), break, number}
+
+        blocks_filled ->
+          filled = fill_placeholders(blocks_filled, vars)
+          {if(blank?(filled), do: :drop, else: :keep), filled, break, number}
+      end
+    end)
+    |> drop_left_out([])
+  end
+
+  defp with_breaks([line, break | rest], number),
+    do: [{line, break, number} | with_breaks(rest, number + 1)]
+
+  defp with_breaks([line], number), do: [{line, "", number}]
+
+  # A left out line goes with its line break. When it stood alone between
+  # blank lines (or at the start or end of the text), as a paragraph of its
+  # own, one of those blank lines goes too, so no gap is left.
+  defp drop_left_out([], kept), do: Enum.reverse(kept)
+
+  defp drop_left_out([{:keep, line, break, number} | rest], kept),
+    do: drop_left_out(rest, [{line, break, number} | kept])
+
+  defp drop_left_out(lines, kept) do
+    {_dropped, rest} = Enum.split_while(lines, &(elem(&1, 0) == :drop))
+    alone? = paragraph_edge?(List.first(kept)) and paragraph_edge?(List.first(rest))
+
+    {rest, kept} =
+      cond do
+        # The blank line after it.
+        alone? and rest != [] -> {tl(rest), kept}
+        # At the end of the text, the blank line before it.
+        alone? and kept != [] -> {rest, tl(kept)}
+        true -> {rest, kept}
+      end
+
+    # The line before the left out ones now ends the text.
+    kept =
+      case {rest, kept} do
+        {[], [{line, _break, number} | earlier]} -> [{line, "", number} | earlier]
+        _ -> kept
+      end
+
+    drop_left_out(rest, kept)
+  end
+
+  defp paragraph_edge?(nil), do: true
+  defp paragraph_edge?({line, _break, _number}), do: blank?(line)
+  defp paragraph_edge?({_keep, line, _break, _number}), do: blank?(line)
+
+  defp blank?(text), do: String.trim(text) == ""
+
+  defp fill_blocks(line, decide) do
+    Regex.replace(@block, line, fn whole, kind, name, text ->
+      case decide.(name) do
+        :unknown -> whole
+        has_value when has_value == (kind == "#") -> fill_blocks(text, decide)
+        _left_out -> ""
+      end
+    end)
+  end
+
+  defp fill_placeholders(line, vars) do
+    Regex.replace(@placeholder, line, fn whole, name -> Map.get(vars, name, whole) end)
+  end
+
+  defp without_block_tags(line) do
+    Regex.replace(@block_tag, line, fn whole, _kind, name ->
+      if name in @block_names, do: "", else: whole
+    end)
+  end
+
+  @doc """
+  Messages for the blocks of `text` that do not open and close on one line,
+  or that sit in a block of the same name.
+  """
+  def block_errors(text) do
+    text
+    |> lines()
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {line, number} -> line_block_errors(line, number) end)
+  end
+
+  defp lines(text), do: String.split(text || "", ["\r\n", "\n", "\r"])
+
+  defp line_block_errors(line, number) do
+    @block_tag
+    |> Regex.scan(line)
+    |> Enum.filter(fn [_whole, _kind, name] -> name in @block_names end)
+    |> Enum.reduce_while([], fn
+      [_whole, "/", name], [{_kind, name} | open] ->
+        {:cont, open}
+
+      [_whole, "/", name], [{_kind, inner} | _open] = open ->
+        message =
+          if List.keymember?(open, name, 1),
+            do: "closes #{tag("/" <> name)} before #{tag("/" <> inner)}",
+            else: "has #{tag("/" <> name)} without #{tag("#" <> name)} before it"
+
+        {:halt, {:error, message}}
+
+      [_whole, "/", name], [] ->
+        {:halt, {:error, "has #{tag("/" <> name)} without #{tag("#" <> name)} before it"}}
+
+      [_whole, kind, name], open ->
+        if List.keymember?(open, name, 1),
+          do: {:halt, {:error, "has #{tag(kind <> name)} in a block of the same name"}},
+          else: {:cont, [{kind, name} | open]}
+    end)
+    |> case do
+      [] ->
+        []
+
+      {:error, message} ->
+        ["#{message} in line #{number}"]
+
+      open ->
+        {kind, name} = List.last(open)
+
+        [
+          "has #{tag(kind <> name)} in line #{number} without #{tag("/" <> name)} " <>
+            "on the same line"
+        ]
+    end
+  end
+
+  @doc """
+  Whether `text` prints the placeholder `name` outside a
+  `{{#name}}…{{/name}}` block, where an empty value leaves a gap.
+  """
+  def bare_placeholder?(text, name) do
+    name = Regex.escape(name)
+    block = ~r/\{\{[ \t]*#[ \t]*#{name}[ \t]*\}\}.*?\{\{[ \t]*\/[ \t]*#{name}[ \t]*\}\}/
+    placeholder = ~r/\{\{[ \t]*#{name}[ \t]*\}\}/
+
+    text
+    |> lines()
+    |> Enum.any?(&Regex.match?(placeholder, Regex.replace(block, &1, "")))
   end
 
   @doc """
@@ -86,8 +319,19 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       "netto" => if(vat?, do: Format.money(totals.net), else: ""),
       "ust_satz" => if(vat?, do: Format.percent(invoice.vat_rate), else: ""),
       "ust" => if(vat?, do: Format.money(totals.vat), else: ""),
-      "steuernummer" => texts.tax_id || ""
+      "steuernummer" => tax_id_value(texts, invoice)
     }
+  end
+
+  # The tax number line as {{steuernummer}} prints it. With blocks (such as
+  # a VAT number only on invoices with VAT), as the tax number line prints;
+  # without, as typed, as before blocks existed.
+  defp tax_id_value(%{tax_id: nil}, _invoice), do: ""
+
+  defp tax_id_value(%{tax_id: tax_id} = texts, invoice) do
+    if Regex.match?(@block_tag, tax_id),
+      do: fill(tax_id, vars(invoice, %{texts | tax_id: ""})),
+      else: tax_id
   end
 
   @doc """
@@ -167,14 +411,17 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   @doc """
   The letter of `template` filled with sample data, for the template preview.
+  With `due_date: false`, the sample invoice has no due date, with
+  `vat: true` it charges 19 % VAT.
   """
-  def sample(template, today), do: template |> sample_invoice(today) |> build()
+  def sample(template, today, opts \\ []),
+    do: template |> sample_invoice(today, opts) |> build()
 
   @doc """
-  An issued invoice of `template` with sample data, the one `sample/2`
+  An issued invoice of `template` with sample data, the one `sample/3`
   shows.
   """
-  def sample_invoice(template, today) do
+  def sample_invoice(template, today, opts \\ []) do
     previous = today |> Date.beginning_of_month() |> Date.add(-1)
     rate = Decimal.new(85)
 
@@ -194,18 +441,19 @@ defmodule PotionZeitgeist.Invoicing.Letter do
         }
       end)
 
-    totals = Calculation.totals(items, 0)
+    vat_rate = if Keyword.get(opts, :vat, false), do: Decimal.new(19), else: Decimal.new(0)
+    totals = Calculation.totals(items, vat_rate)
 
     %Invoice{
       status: "issued",
       number: "#{today.year}-001",
       invoice_date: today,
-      due_date: Date.add(today, 14),
+      due_date: if(Keyword.get(opts, :due_date, true), do: Date.add(today, 14)),
       period_start: Date.beginning_of_month(previous),
       period_end: previous,
       recipient: "Beispiel GmbH\nFrau Erika Musterfrau\nHauptstraße 5\n10115 Berlin",
-      tax_mode: "small_business",
-      vat_rate: Decimal.new(0),
+      tax_mode: if(Decimal.gt?(vat_rate, 0), do: "standard", else: "small_business"),
+      vat_rate: vat_rate,
       net_total: totals.net,
       vat_total: totals.vat,
       gross_total: totals.gross,

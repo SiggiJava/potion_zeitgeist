@@ -142,7 +142,7 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   """
   def printed_lines(text, box) do
     text
-    |> typed_lines(&Function.identity/1)
+    |> typed_lines()
     |> counts(box)
     |> Enum.map(&elem(&1, 0))
     |> Enum.sum()
@@ -157,8 +157,20 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   `text`.
   """
   def check(text, box, fill \\ &Function.identity/1) do
+    text
+    |> numbered_lines()
+    |> Enum.map(fn {line, number} -> {fill.(line), number} end)
+    |> check_lines(box)
+  end
+
+  @doc """
+  Like `check/3`, for the lines of a text as they print, each with its
+  number in the typed text, such as
+  `PotionZeitgeist.Invoicing.Letter.fill_lines/2` gives them.
+  """
+  def check_lines(lines, box) do
     %{lines: max, name: name} = Map.fetch!(@boxes, box)
-    lines = typed_lines(text, fill)
+    lines = printed(lines)
 
     case unsupported(lines) do
       [] -> check_counts(counts(lines, box), box, max, name)
@@ -172,7 +184,7 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
   invoice number.
   """
   def check_characters(text) do
-    case text |> typed_lines(&Function.identity/1) |> unsupported() do
+    case text |> typed_lines() |> unsupported() do
       [] -> :ok
       chars -> unsupported_error(chars)
     end
@@ -216,15 +228,22 @@ defmodule PotionZeitgeist.Invoicing.LetterLayout do
     "lines #{Enum.join(rest, ", ")} and #{last} are"
   end
 
-  # Each line of `text` as it prints, with its number in `text`. The letter
-  # prints texts trimmed (see `PotionZeitgeist.Invoicing.Letter.build/2`),
-  # so blank lines at the start and end do not count, nor does a line break
-  # at the start or end of a filled in value there.
-  defp typed_lines(text, fill) do
+  # Each line of `text` as it prints, with its number in `text`.
+  defp typed_lines(text), do: text |> numbered_lines() |> printed()
+
+  defp numbered_lines(text) do
     (text || "")
     |> String.split(["\r\n", "\n", "\r"])
     |> Enum.with_index(1)
-    |> Enum.map(fn {line, number} -> {line |> fill.() |> clean(), number} end)
+  end
+
+  # The letter prints texts trimmed (see
+  # `PotionZeitgeist.Invoicing.Letter.build/2`), so blank lines at the start
+  # and end do not count, nor does a line break at the start or end of a
+  # filled in value there.
+  defp printed(lines) do
+    lines
+    |> Enum.map(fn {line, number} -> {clean(line), number} end)
     |> Enum.drop_while(&blank?/1)
     |> Enum.reverse()
     |> Enum.drop_while(&blank?/1)
