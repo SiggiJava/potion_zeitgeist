@@ -36,6 +36,19 @@ defmodule PotionZeitgeistWeb.StylesheetCheckTest do
     end
   end
 
+  describe "Scan.sources/1" do
+    @tag :tmp_dir
+    test "finds .ex and .heex files below a path with pattern characters", %{tmp_dir: dir} do
+      web = Path.join(dir, "code [old] {x}")
+      File.mkdir_p!(Path.join(web, "live"))
+      File.write!(Path.join(web, "a.ex"), "")
+      File.write!(Path.join([web, "live", "b.heex"]), "")
+      File.write!(Path.join(web, "notes.md"), "")
+
+      assert Scan.sources(web) == [Path.join(web, "a.ex"), Path.join([web, "live", "b.heex"])]
+    end
+  end
+
   describe "Scan.known_icons/1" do
     @tag :tmp_dir
     test "names icons by folder like the Tailwind plugin", %{tmp_dir: dir} do

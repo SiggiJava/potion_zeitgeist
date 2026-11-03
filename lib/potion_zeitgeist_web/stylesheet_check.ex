@@ -12,16 +12,25 @@ defmodule PotionZeitgeistWeb.StylesheetCheck.Scan do
     {"-micro", "16/solid"}
   ]
 
-  @doc "The template and module files that Tailwind scans for class names."
-  def sources(web_dir) do
-    web_dir |> Path.join("**/*.{ex,heex}") |> Path.wildcard() |> Enum.sort()
-  end
+  @doc """
+  The .ex and .heex files under `dir`, the files that Tailwind scans for
+  class names, sorted. The folders are walked one by one rather than with
+  Path.wildcard/1, which would read brackets or braces in the checkout path
+  as a pattern.
+  """
+  def sources(dir) do
+    dir
+    |> File.ls!()
+    |> Enum.sort()
+    |> Enum.flat_map(fn name ->
+      path = Path.join(dir, name)
 
-  @doc "A fingerprint of the file names and contents."
-  def fingerprint(sources) do
-    sources
-    |> Enum.map(fn path -> [path, File.read!(path)] end)
-    |> :erlang.md5()
+      cond do
+        File.dir?(path) -> sources(path)
+        Path.extname(name) in [".ex", ".heex"] -> [path]
+        true -> []
+      end
+    end)
   end
 
   @doc """
@@ -51,20 +60,23 @@ defmodule PotionZeitgeistWeb.StylesheetCheck.Scan do
     |> Enum.sort()
   end
 
-  # A whole string literal such as "hero-plus" or "hero-sun-micro".
-  defp quoted_icon, do: ~r/"(hero-[a-z0-9]+(?:-[a-z0-9]+)*)"/
+  # A whole string literal such as "hero-plus" or "hero-sun-micro". Tailwind
+  # scans this file too, so the pattern must not contain the icon prefix
+  # followed by an opening bracket: Tailwind would take that for an icon
+  # class with an arbitrary value, which the heroicons plugin cannot build.
+  defp quoted_icon, do: ~r/"(hero(?:-[a-z0-9]+)+)"/
 end
 
 defmodule PotionZeitgeistWeb.StylesheetCheck do
   @moduledoc """
-  Lets the browser find out whether the served app.css is older than the pages.
+  Lets the browser find out whether the served app.css lacks icons the pages use.
 
   Tailwind builds app.css from the class names in the templates, and an icon
   such as `hero-plus` only exists in it when the build saw that name. When an
   update is pulled but the stylesheet is not rebuilt, or a browser keeps an
   old copy, new icons stay invisible while still taking up their room, so the
-  text of an icon button looks pushed to the right, and new pages miss other
-  styles too.
+  text of an icon button looks pushed to the right, and new pages may miss
+  other styles too.
 
   The root layout therefore carries a hidden notice and a small inline
   script. The script checks for every icon that the templates use whether
@@ -85,19 +97,28 @@ defmodule PotionZeitgeistWeb.StylesheetCheck do
   @icons_dir Path.expand("../../deps/heroicons/optimized", __DIR__)
 
   @sources Scan.sources(@web_dir)
-  @fingerprint Scan.fingerprint(@sources)
 
   for source <- @sources do
     @external_resource source
   end
 
-  @icons Scan.icons_in(Enum.map(@sources, &File.read!/1), Scan.known_icons(@icons_dir))
+  @known_icons Scan.known_icons(@icons_dir)
 
-  # A template file added later is not among the files above, so Mix also
-  # asks this function whether the module has to be compiled again.
+  if MapSet.size(@known_icons) == 0 do
+    IO.warn(
+      "no heroicons found in #{@icons_dir}, so the outdated stylesheet check is off. " <>
+        "Run mix deps.get."
+    )
+  end
+
+  @icons Scan.icons_in(Enum.map(@sources, &File.read!/1), @known_icons)
+
+  # Changed files are covered by @external_resource. A template file that is
+  # added or removed later is not, so Mix also asks this function whether the
+  # module has to be compiled again.
   @doc false
   def __mix_recompile__? do
-    Scan.fingerprint(Scan.sources(@web_dir)) != @fingerprint
+    Scan.sources(@web_dir) != @sources
   end
 
   @doc "The heroicons used in the templates, as their `hero-…` class names."

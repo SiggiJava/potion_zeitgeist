@@ -167,6 +167,7 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert html =~ ".inv-sheet {"
     assert html =~ ~s(href="/fonts/inter/inter-latin-400-normal.woff2")
     refute html =~ "/assets/"
+    refute html =~ "stylesheet-outdated"
     # Footer and watermark are repeated in <body> for every printed page.
     assert [_, _] = Regex.scan(~r/<footer class="inv-footer/, html)
     # The pages keep room for the footer's two lines (tax number, bank).

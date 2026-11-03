@@ -70,21 +70,33 @@
         // Every hero-* rule of app.css sets a mask image. An icon without one
         // has no rule, so the stylesheet was built before the icon was used.
         const hasMask = (value) => typeof value === "string" && value.includes("url(");
-        const probe = document.createElement("span");
-        probe.setAttribute("aria-hidden", "true");
-        probe.style.cssText = "position: absolute; visibility: hidden; pointer-events: none;";
-        document.body.appendChild(probe);
-        const missing = icons.filter((icon) => {
-          probe.className = icon;
-          const style = getComputedStyle(probe);
-          return !hasMask(style.maskImage) && !hasMask(style.webkitMaskImage);
-        });
-        probe.remove();
-        if (missing.length === 0) return;
+        let closed = false;
+        const check = () => {
+          const probe = document.createElement("span");
+          probe.setAttribute("aria-hidden", "true");
+          probe.style.cssText = "position: absolute; visibility: hidden; pointer-events: none;";
+          document.body.appendChild(probe);
+          const missing = icons.filter((icon) => {
+            probe.className = icon;
+            const style = getComputedStyle(probe);
+            return !hasMask(style.maskImage) && !hasMask(style.webkitMaskImage);
+          });
+          probe.remove();
+          notice.dataset.missing = missing.join(" ");
+          notice.hidden = closed || missing.length === 0;
+        };
 
-        notice.dataset.missing = missing.join(" ");
-        notice.querySelector("button").addEventListener("click", () => { notice.hidden = true; });
-        notice.hidden = false;
+        notice.querySelector("button").addEventListener("click", () => {
+          closed = true;
+          notice.hidden = true;
+        });
+        // The live reloader of mix phx.server swaps in a rebuilt app.css
+        // without loading the page again, so check again whenever a
+        // stylesheet has loaded.
+        document.addEventListener("load", (event) => {
+          if (event.target instanceof HTMLLinkElement && event.target.rel === "stylesheet") check();
+        }, true);
+        check();
       })();
     </script>
   </body>
