@@ -47,8 +47,11 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
   @doc """
   Validates the fields of the invoice form. Items and totals are computed by
   `PotionZeitgeist.Invoicing` and put on the changeset there.
+
+  With `time?: false` the invoice bills no time entries (only other items),
+  so it needs no hourly rate.
   """
-  def draft_changeset(invoice, attrs) do
+  def draft_changeset(invoice, attrs, opts \\ []) do
     invoice
     |> cast(attrs, [
       :invoice_date,
@@ -72,7 +75,7 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
     ])
     |> validate_inclusion(:rate_mode, @rate_modes)
     |> validate_inclusion(:tax_mode, @tax_modes)
-    |> cast_hourly_rate(attrs)
+    |> cast_hourly_rate(attrs, Keyword.get(opts, :time?, true))
     |> cast_vat_rate(attrs)
     |> validate_recipient()
     |> validate_dates()
@@ -129,13 +132,15 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
 
   # The form keeps the values of rate fields it no longer shows, so only the
   # rate of the chosen mode is read. Rates are stored with two decimals and
-  # validated as stored.
-  defp cast_hourly_rate(changeset, attrs) do
+  # validated as stored. Without time to bill, the rate may be left blank.
+  defp cast_hourly_rate(changeset, attrs, time?) do
     if get_field(changeset, :rate_mode) == "single" do
+      required = if time?, do: [:hourly_rate], else: []
+
       changeset
       |> cast(attrs, [:hourly_rate])
       |> update_change(:hourly_rate, &Calculation.round_rate/1)
-      |> validate_required([:hourly_rate], message: "is needed for one rate for all")
+      |> validate_required(required, message: "is needed for one rate for all")
       |> validate_number(:hourly_rate, greater_than: 0, less_than: 100_000_000)
     else
       put_change(changeset, :hourly_rate, nil)

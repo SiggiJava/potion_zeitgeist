@@ -181,6 +181,116 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert html =~ ~s(id="inv-layout-warning")
   end
 
+  test "an invoice can bill other items, such as material, next to time or alone", ctx do
+    template = template_fixture()
+    {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/new")
+
+    view |> form("#invoice-form", invoice: %{month: "2026-10"}) |> render_change()
+    view |> element("#add-manual-item") |> render_click()
+    view |> element("#add-manual-item") |> render_click()
+    assert [router, cable] = manual_row_ids(view)
+
+    html =
+      view
+      |> form("#invoice-form",
+        invoice: %{
+          template_id: template.id,
+          recipient: "Kunde GmbH\nWeg 2\n10115 Berlin",
+          manual_items: %{
+            "0" => %{description: "Router", quantity: "2", unit: "Stk.", unit_price: "49,95"},
+            "1" => %{description: "Kabel", quantity: "", unit: "", unit_price: ""}
+          }
+        }
+      )
+      |> render_change()
+
+    assert has_element?(view, "##{router}-amount", "99,90 €")
+    assert has_element?(view, "#summary-total", "99,90 €")
+    assert has_element?(view, "#invoice-summary", "2 Stk. × 49,95 €")
+    assert has_element?(view, "#incomplete-items-hint", "1 other item is not complete")
+    # A field left blank is not reported while the row is being filled in.
+    refute html =~ "enter a quantity"
+
+    html = view |> form("#invoice-form") |> render_submit()
+    assert html =~ "complete or remove the items marked below"
+    assert html =~ "enter a quantity"
+    assert Invoicing.list_invoices() == []
+
+    view |> element("##{cable}-remove") |> render_click()
+    refute has_element?(view, "##{cable}")
+
+    # The browser may still send the removed row once; it stays removed.
+    render_change(view, "validate", %{
+      "invoice" => %{
+        "manual_items" => %{
+          "0" => %{"id" => router, "description" => "Router", "quantity" => "3"},
+          "1" => %{"id" => cable, "description" => "Kabel", "quantity" => "1"}
+        }
+      }
+    })
+
+    refute has_element?(view, "##{cable}")
+    assert has_element?(view, "##{router}-amount", "149,85 €")
+
+    {:ok, show, _html} =
+      view
+      |> form("#invoice-form")
+      |> render_submit()
+      |> follow_redirect(ctx.conn)
+
+    [invoice] = Invoicing.list_invoices()
+    assert Invoicing.entry_ids(invoice) == []
+    assert Decimal.equal?(invoice.gross_total, Decimal.new("149.85"))
+    assert has_element?(show, "#invoice-letter", "Einzelpreis")
+    assert has_element?(show, "#invoice-letter td", "Router")
+    assert has_element?(show, "#invoice-letter td", "Stk.")
+
+    # The edit page shows the item again, and time can be added to it.
+    {:ok, edit, _html} = live(ctx.conn, ~p"/admin/invoices/#{invoice}/edit")
+    assert [row] = manual_row_ids(edit)
+    assert has_element?(edit, "##{row}-description[value='Router']")
+    assert has_element?(edit, "##{row}-quantity[value='3']")
+    assert has_element?(edit, "##{row}-unit-price[value='49,95']")
+
+    edit |> element("#toggle-group-#{ctx.project.id}") |> render_click()
+
+    {:ok, show, _html} =
+      edit
+      |> form("#invoice-form", invoice: %{hourly_rate: "80"})
+      |> render_submit()
+      |> follow_redirect(ctx.conn)
+
+    assert [%{kind: "time", position: 1}, %{kind: "manual", position: 2}] =
+             Invoicing.get_invoice!(invoice.id).items
+
+    assert has_element?(show, "#invoice-letter td", "Std.")
+
+    html = ctx.conn |> get(~p"/admin/invoices/#{invoice}/print") |> html_response(200)
+    assert html =~ "Bezeichnung"
+    assert html =~ "469,85 €"
+  end
+
+  test "after a reconnect the other items come back as the browser sends them", ctx do
+    template_fixture()
+    {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/new")
+    assert manual_row_ids(view) == []
+
+    render_change(view, "recover", %{
+      "invoice" => %{
+        "month" => "2026-10",
+        "recipient" => "Neu GmbH\nStraße 1\n12345 Ort",
+        "manual_items" => %{
+          "0" => %{"id" => "item-7", "description" => "Router", "quantity" => "1"},
+          "1" => %{"id" => "item-9", "description" => "Kabel", "_unused_quantity" => ""}
+        }
+      }
+    })
+
+    assert manual_row_ids(view) == ["item-7", "item-9"]
+    assert has_element?(view, "#item-9-description[value='Kabel']")
+    assert has_element?(view, "#invoice-recipient", "Neu GmbH")
+  end
+
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do
     template = template_fixture()
     invoice = draft_fixture(template, ctx.entries)
@@ -414,6 +524,13 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
 
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/admin/invoices")
     assert conn |> get(~p"/admin/invoices/1/print") |> redirected_to() == ~p"/"
+  end
+
+  defp manual_row_ids(view) do
+    ~r/id="([^"]+)-description"/
+    |> Regex.scan(render(view), capture: :all_but_first)
+    |> Enum.map(&hd/1)
+    |> Enum.filter(&String.starts_with?(&1, "item-"))
   end
 
   defp letter_classes(view) do

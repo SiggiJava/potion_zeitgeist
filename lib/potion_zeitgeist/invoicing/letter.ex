@@ -19,7 +19,7 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   service period, items, totals and, for small businesses, the § 19 UStG note.
   """
 
-  alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice, LetterLayout}
+  alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice, InvoiceItem, LetterLayout}
 
   # A placeholder stays on one line, so each line of a text can be filled
   # (and measured, see `PotionZeitgeist.Invoicing.LetterLayout.check_lines/2`)
@@ -46,7 +46,7 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     {"monat", "Billed month, e.g. Oktober 2026"},
     {"empfaenger", "Recipient address"},
     {"positionen", "Table of items with totals (letter text only)"},
-    {"stunden", "Total hours"},
+    {"stunden", "Total hours of the time entries"},
     {"gesamtbetrag", "Total amount due"},
     {"netto", "Net amount (only with VAT)"},
     {"ust_satz", "VAT rate (only with VAT)"},
@@ -378,12 +378,19 @@ defmodule PotionZeitgeist.Invoicing.Letter do
 
   Expects `:items` and, for drafts, `:template` loaded. `entries` are the
   invoice's `PotionZeitgeist.Invoicing.InvoiceEntry` rows for the time sheet.
+
+  The table of items has the columns of `:item_columns`: `:hours` (hours
+  and hourly rate) when all items bill time entries, as invoices printed
+  before there were other items, or `:quantity` (quantity, unit and price
+  per unit) when there are other items too, where time prints in hours
+  ("Std.") at the hourly rate.
   """
   def build(%Invoice{} = invoice, entries \\ []) do
     texts = texts(invoice)
     vars = vars(invoice, texts)
     {before_items, after_items} = texts.body |> fill(vars) |> split_body()
     sender = texts.sender |> fill(vars) |> boxed()
+    columns = item_columns(invoice.items)
 
     %{
       watermark: watermark(invoice.status),
@@ -394,7 +401,8 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       subject: texts.subject |> fill(vars) |> String.trim(),
       before_items: before_items,
       after_items: after_items,
-      items: Enum.map(invoice.items, &item_row/1),
+      item_columns: columns,
+      items: Enum.map(invoice.items, &item_row(&1, columns)),
       totals: total_rows(invoice),
       tax_note: if(invoice.tax_mode == "standard", do: nil, else: @small_business_note),
       tax_id: texts.tax_id |> fill(vars) |> boxed(),
@@ -502,12 +510,32 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     ] ++ if(invoice.due_date, do: [{"Fällig am", vars["faellig_am"]}], else: [])
   end
 
-  defp item_row(item) do
+  defp item_columns(items) do
+    if Enum.all?(items, &InvoiceItem.time?/1), do: :hours, else: :quantity
+  end
+
+  defp item_row(item, :hours) do
     %{
       position: item.position,
       description: item.description,
       hours: Format.hours(item.hours),
       rate: Format.money(item.hourly_rate),
+      amount: Format.money(item.amount)
+    }
+  end
+
+  defp item_row(item, :quantity) do
+    {quantity, unit, price} =
+      if InvoiceItem.time?(item),
+        do: {Format.hours(item.hours), "Std.", Format.money(item.hourly_rate)},
+        else: {Format.quantity(item.quantity), item.unit || "", Format.money(item.unit_price)}
+
+    %{
+      position: item.position,
+      description: item.description,
+      quantity: quantity,
+      unit: unit,
+      price: price,
       amount: Format.money(item.amount)
     }
   end
@@ -527,10 +555,14 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   end
 
   # Amounts come from the totals stored with the invoice, so a printed invoice
-  # never changes after it was saved.
+  # never changes after it was saved. Hours are those of the time entries.
   defp totals(invoice) do
     %{
-      hours: invoice.items |> Enum.map(& &1.hours) |> Enum.reduce(Decimal.new(0), &Decimal.add/2),
+      hours:
+        invoice.items
+        |> Enum.filter(&InvoiceItem.time?/1)
+        |> Enum.map(& &1.hours)
+        |> Enum.reduce(Decimal.new(0), &Decimal.add/2),
       net: invoice.net_total,
       vat: invoice.vat_total,
       gross: invoice.gross_total

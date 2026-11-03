@@ -30,6 +30,17 @@ defmodule PotionZeitgeist.Invoicing.Format do
   def hours(nil), do: ""
   def hours(hours), do: number(hours, 2)
 
+  @doc """
+  A quantity with as many decimals as it has: `Decimal.new("2.500")` becomes
+  "2,5", `Decimal.new("1250")` "1.250".
+  """
+  def quantity(nil), do: ""
+
+  def quantity(value) do
+    value = value |> Decimal.new() |> Decimal.normalize()
+    number(value, max(-value.exp, 0))
+  end
+
   @doc "Minutes as hours and minutes: 125 becomes \"2:05\"."
   def duration(minutes) when is_integer(minutes) do
     "#{div(minutes, 60)}:#{minutes |> rem(60) |> Integer.to_string() |> String.pad_leading(2, "0")}"

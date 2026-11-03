@@ -2,6 +2,10 @@ defmodule PotionZeitgeist.Invoicing do
   @moduledoc """
   Invoices for booked project time, and the letter templates they are printed with.
 
+  An invoice bills the time entries of a month, one item per project, and
+  can have other items entered on the form, such as material or flat fees
+  (see `PotionZeitgeist.Invoicing.ManualItem`), or only those.
+
   An invoice starts as a draft that can be edited and deleted. Issuing it
   assigns the invoice number and freezes the letter texts. An issued invoice
   can only be cancelled, which keeps it and its number but frees its time
@@ -13,7 +17,7 @@ defmodule PotionZeitgeist.Invoicing do
 
   alias PotionZeitgeist.Repo
   alias PotionZeitgeist.Invoicing.{Calculation, Invoice, InvoiceEntry, InvoiceItem}
-  alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout}
+  alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout, ManualItem}
   alias PotionZeitgeist.TimeTracking.TimeEntry
 
   @payment_days 14
@@ -303,7 +307,8 @@ defmodule PotionZeitgeist.Invoicing do
       "show_timesheet" => "true",
       "rates" => last_item_values(:hourly_rate),
       "descriptions" => last_item_values(:description),
-      "entry_ids" => []
+      "entry_ids" => [],
+      "manual_items" => []
     }
 
     if base, do: apply_base(defaults, base), else: defaults
@@ -312,7 +317,9 @@ defmodule PotionZeitgeist.Invoicing do
   @doc """
   Copies recipient, template, tax, rates, descriptions, time sheet setting and
   payment term of `base` into the form `params`. The month stays. Without a
-  due date on `base`, the new invoice has none either.
+  due date on `base`, the new invoice has none either. Items other than
+  time are not copied (see `manual_item_rows/1`), so material is not billed
+  twice by mistake.
   """
   def apply_base(params, %Invoice{} = base) do
     base = Repo.preload(base, :items)
@@ -345,18 +352,32 @@ defmodule PotionZeitgeist.Invoicing do
       "rate_mode" => base.rate_mode,
       "hourly_rate" => decimal_param(base.hourly_rate),
       "show_timesheet" => to_string(base.show_timesheet),
-      "rates" => Map.merge(params["rates"] || %{}, item_values(base.items, :hourly_rate)),
-      "descriptions" =>
-        Map.merge(params["descriptions"] || %{}, item_values(base.items, :description))
+      "rates" => Map.merge(params["rates"] || %{}, item_values(base, :hourly_rate)),
+      "descriptions" => Map.merge(params["descriptions"] || %{}, item_values(base, :description))
     })
   end
 
   @doc "Project keys (see `Calculation.item_key/1`) billed on `invoice`."
   def item_keys(%Invoice{} = invoice) do
     invoice
+    |> time_items()
+    |> Enum.map(&Calculation.item_key(&1.project_id))
+  end
+
+  @doc """
+  The form rows (see `PotionZeitgeist.Invoicing.ManualItem.to_row/1`) of the
+  items of `invoice` that bill no time entries, in their order.
+  """
+  def manual_item_rows(%Invoice{} = invoice) do
+    invoice
     |> Repo.preload(:items)
     |> Map.fetch!(:items)
-    |> Enum.map(&Calculation.item_key(&1.project_id))
+    |> Enum.reject(&InvoiceItem.time?/1)
+    |> Enum.map(&ManualItem.to_row/1)
+  end
+
+  defp time_items(invoice) do
+    invoice |> Repo.preload(:items) |> Map.fetch!(:items) |> Enum.filter(&InvoiceItem.time?/1)
   end
 
   @doc "Form values of an existing draft."
@@ -379,11 +400,11 @@ defmodule PotionZeitgeist.Invoicing do
       "rate_mode" => invoice.rate_mode,
       "hourly_rate" => decimal_param(invoice.hourly_rate),
       "show_timesheet" => to_string(invoice.show_timesheet),
-      "rates" =>
-        Map.merge(last_item_values(:hourly_rate), item_values(invoice.items, :hourly_rate)),
+      "rates" => Map.merge(last_item_values(:hourly_rate), item_values(invoice, :hourly_rate)),
       "descriptions" =>
-        Map.merge(last_item_values(:description), item_values(invoice.items, :description)),
-      "entry_ids" => invoice |> entry_ids() |> Enum.map(&to_string/1)
+        Map.merge(last_item_values(:description), item_values(invoice, :description)),
+      "entry_ids" => invoice |> entry_ids() |> Enum.map(&to_string/1),
+      "manual_items" => manual_item_rows(invoice)
     }
   end
 
@@ -408,12 +429,13 @@ defmodule PotionZeitgeist.Invoicing do
     end
   end
 
-  # The most recent rate or description billed per project, keyed like the form fields.
+  # The most recent rate or description billed per project, keyed like the
+  # form fields. Other items than time belong to no project.
   defp last_item_values(field) do
     Repo.all(
       from it in InvoiceItem,
         join: i in assoc(it, :invoice),
-        where: i.status != "cancelled",
+        where: i.status != "cancelled" and it.kind == "time",
         distinct: it.project_id,
         order_by: [asc: it.project_id, desc: i.inserted_at, desc: it.id],
         select: {it.project_id, field(it, ^field)}
@@ -423,8 +445,10 @@ defmodule PotionZeitgeist.Invoicing do
     end)
   end
 
-  defp item_values(items, field) do
-    Map.new(items, &{Calculation.item_key(&1.project_id), form_value(Map.fetch!(&1, field))})
+  defp item_values(invoice, field) do
+    invoice
+    |> time_items()
+    |> Map.new(&{Calculation.item_key(&1.project_id), form_value(Map.fetch!(&1, field))})
   end
 
   defp form_value(%Decimal{} = value), do: decimal_param(value)
@@ -433,8 +457,13 @@ defmodule PotionZeitgeist.Invoicing do
   ## Preview and drafts
 
   @doc """
-  Items and totals for the selected entries and the rate fields of the form,
-  for the live summary. Never touches the database.
+  Items and totals for the selected entries, the rate fields and the other
+  items of the form, for the live summary. Never touches the database.
+
+  `:manual_errors` has the messages of the other items that are not
+  complete, by row id and field (see
+  `PotionZeitgeist.Invoicing.ManualItem.parse/1`); those count for nothing
+  yet.
   """
   def preview(entries, params) do
     tax_mode = if params["tax_mode"] == "standard", do: "standard", else: "small_business"
@@ -445,16 +474,47 @@ defmodule PotionZeitgeist.Invoicing do
         do: Calculation.round_rate(parse_decimal(params["vat_rate"]) || Decimal.new(0)),
         else: Decimal.new(0)
 
-    items = build_items(entries, params)
+    time_items = build_items(entries, params)
+    manual = manual_items(params, length(time_items))
+    items = time_items ++ manual.items
 
     %{
       items: items,
       totals: Calculation.totals(items, vat_rate),
       tax_mode: tax_mode,
       vat_rate: vat_rate,
-      missing_rate?: Enum.any?(items, &is_nil(&1.hourly_rate))
+      missing_rate?: Enum.any?(time_items, &is_nil(&1.hourly_rate)),
+      manual_errors: manual.errors
     }
   end
+
+  # The other items of the form that are filled in, numbered on after the
+  # `before` items of time and with the id of their row, and the errors of
+  # those that are not complete, by row id. Rows left blank are no items.
+  defp manual_items(params, before) do
+    {items, errors} =
+      params
+      |> ManualItem.rows()
+      |> Enum.with_index()
+      |> Enum.reject(fn {row, _index} -> ManualItem.blank?(row) end)
+      |> Enum.reduce({[], %{}}, fn {row, index}, {items, errors} ->
+        case ManualItem.parse(row) do
+          {:ok, item} -> {[Map.put(item, :row_id, row_id(row, index)) | items], errors}
+          {:error, messages} -> {items, Map.put(errors, row_id(row, index), messages)}
+        end
+      end)
+
+    items =
+      items
+      |> Enum.reverse()
+      |> Enum.with_index(before + 1)
+      |> Enum.map(fn {item, position} -> Map.put(item, :position, position) end)
+
+    %{items: items, errors: errors}
+  end
+
+  defp row_id(%{"id" => id}, _index) when is_binary(id) and id != "", do: id
+  defp row_id(_row, index), do: to_string(index)
 
   defp build_items(entries, params) do
     single_rate = parse_rate(params["hourly_rate"])
@@ -485,8 +545,11 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Creates a draft from the form params: the invoice fields, `"month"`
-  (`"2026-10"`), `"entry_ids"`, and per project `"rates"` and
-  `"descriptions"` keyed by `PotionZeitgeist.Invoicing.Calculation.item_key/1`.
+  (`"2026-10"`), `"entry_ids"`, per project `"rates"` and `"descriptions"`
+  keyed by `PotionZeitgeist.Invoicing.Calculation.item_key/1`, and
+  `"manual_items"`, the rows of the other items (see
+  `PotionZeitgeist.Invoicing.ManualItem.rows/1`). It needs time entries,
+  other items or both.
   """
   def create_draft(params), do: save_draft(%Invoice{}, params)
 
@@ -521,16 +584,20 @@ defmodule PotionZeitgeist.Invoicing do
           []
         end
 
-      items = build_items(entries, params)
+      time_items = build_items(entries, params)
+      manual = manual_items(params, length(time_items))
+      items = time_items ++ manual.items
 
       changeset =
         invoice
         |> Invoice.draft_changeset(
-          Map.merge(params, %{"period_start" => period_start, "period_end" => period_end})
+          Map.merge(params, %{"period_start" => period_start, "period_end" => period_end}),
+          time?: entry_ids != []
         )
         |> put_totals(items)
-        |> validate_entries(entries, entry_ids)
-        |> validate_rates(items)
+        |> validate_entries(entries, entry_ids, manual)
+        |> validate_manual_items(manual)
+        |> validate_rates(time_items)
         |> validate_total()
 
       if changeset.valid? do
@@ -574,10 +641,14 @@ defmodule PotionZeitgeist.Invoicing do
     |> Ecto.Changeset.put_change(:gross_total, totals.gross)
   end
 
-  defp validate_entries(changeset, entries, entry_ids) do
+  defp validate_entries(changeset, entries, entry_ids, manual) do
     cond do
-      entry_ids == [] ->
-        Ecto.Changeset.add_error(changeset, :entries, "select at least one time entry")
+      entry_ids == [] and manual.items == [] and manual.errors == %{} ->
+        Ecto.Changeset.add_error(
+          changeset,
+          :entries,
+          "select at least one time entry or add another item"
+        )
 
       length(entries) < length(entry_ids) ->
         Ecto.Changeset.add_error(
@@ -591,9 +662,19 @@ defmodule PotionZeitgeist.Invoicing do
     end
   end
 
-  defp validate_rates(changeset, items) do
+  defp validate_manual_items(changeset, %{errors: errors}) when errors == %{}, do: changeset
+
+  defp validate_manual_items(changeset, _manual) do
+    Ecto.Changeset.add_error(
+      changeset,
+      :manual_items,
+      "complete or remove the items marked below"
+    )
+  end
+
+  defp validate_rates(changeset, time_items) do
     if Ecto.Changeset.get_field(changeset, :rate_mode) == "per_project" and
-         Enum.any?(items, &is_nil(&1.hourly_rate)) do
+         Enum.any?(time_items, &is_nil(&1.hourly_rate)) do
       Ecto.Changeset.add_error(
         changeset,
         :rates,
@@ -612,6 +693,20 @@ defmodule PotionZeitgeist.Invoicing do
     end
   end
 
+  @item_fields [
+    :kind,
+    :position,
+    :project_id,
+    :description,
+    :minutes,
+    :hours,
+    :hourly_rate,
+    :quantity,
+    :unit,
+    :unit_price,
+    :amount
+  ]
+
   # Runs inside the transaction of save_draft/2.
   defp write_draft(changeset, items, entries) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
@@ -625,24 +720,19 @@ defmodule PotionZeitgeist.Invoicing do
     Repo.delete_all(from it in InvoiceItem, where: it.invoice_id == ^invoice.id)
     Repo.delete_all(from ie in InvoiceEntry, where: ie.invoice_id == ^invoice.id)
 
+    # Every row with the same fields: items of time have no quantity, unit
+    # and price per unit, other items no minutes, hours and hourly rate.
     Repo.insert_all(
       InvoiceItem,
       Enum.map(items, fn item ->
-        item
-        |> Map.take([
-          :position,
-          :project_id,
-          :description,
-          :minutes,
-          :hours,
-          :hourly_rate,
-          :amount
-        ])
+        @item_fields
+        |> Map.new(&{&1, Map.get(item, &1)})
         |> Map.merge(%{invoice_id: invoice.id, inserted_at: now, updated_at: now})
       end)
     )
 
-    descriptions = Map.new(items, &{&1.project_id, &1.description})
+    descriptions =
+      items |> Enum.filter(&InvoiceItem.time?/1) |> Map.new(&{&1.project_id, &1.description})
 
     Enum.each(entries, fn entry ->
       %InvoiceEntry{

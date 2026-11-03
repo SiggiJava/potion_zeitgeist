@@ -4,7 +4,7 @@ defmodule PotionZeitgeist.InvoicingTest do
   import PotionZeitgeist.Fixtures
 
   alias PotionZeitgeist.{Accounts, Invoicing, TimeTracking}
-  alias PotionZeitgeist.Invoicing.{Invoice, InvoiceTemplate}
+  alias PotionZeitgeist.Invoicing.{Invoice, InvoiceItem, InvoiceTemplate}
 
   setup do
     user = user_fixture(%{"name" => "Michael"})
@@ -236,16 +236,194 @@ defmodule PotionZeitgeist.InvoicingTest do
                Invoicing.issue_invoice(draft, %{"number" => "1", "invoice_date" => "2026-11-02"})
     end
 
-    test "need entries, a rate and a full recipient address", ctx do
+    test "need entries or other items, a rate for time and a full recipient address", ctx do
       assert {:error, changeset} =
                Invoicing.create_draft(
                  draft_params(ctx.template, [], %{"hourly_rate" => "", "recipient" => "Kunde"})
                )
 
       errors = errors_on(changeset)
-      assert errors.entries == ["select at least one time entry"]
-      assert errors.hourly_rate == ["is needed for one rate for all"]
+      assert errors.entries == ["select at least one time entry or add another item"]
+      # Without time to bill, no hourly rate is needed.
+      refute Map.has_key?(errors, :hourly_rate)
       assert [_] = errors.recipient
+
+      assert {:error, changeset} =
+               Invoicing.create_draft(
+                 draft_params(ctx.template, ctx.entries, %{"hourly_rate" => ""})
+               )
+
+      assert errors_on(changeset).hourly_rate == ["is needed for one rate for all"]
+    end
+
+    test "bill other items after the time, in their order", ctx do
+      no_project = entry_fixture(ctx.user, "2026-10-03 08:00:00", "2026-10-03 09:00:00")
+
+      draft =
+        draft_fixture(ctx.template, [no_project | ctx.entries], %{
+          "tax_mode" => "standard",
+          "vat_rate" => "19",
+          "manual_items" => %{
+            "0" => %{
+              "description" => "Netzwerkkabel",
+              "quantity" => "3",
+              "unit" => "Stk.",
+              "unit_price" => "4,50"
+            },
+            "1" => %{"description" => "", "quantity" => " ", "unit" => "", "unit_price" => ""},
+            "2" => %{
+              "description" => "Einrichtung Router",
+              "quantity" => "1",
+              "unit" => "",
+              "unit_price" => "49"
+            }
+          }
+        })
+
+      assert [
+               %{kind: "time", position: 1, description: "App"},
+               %{kind: "time", position: 2, description: "Website"},
+               %{kind: "time", position: 3, description: "Dienstleistungen", project_id: nil},
+               %{kind: "manual", position: 4, description: "Netzwerkkabel", unit: "Stk."} = cable,
+               %{kind: "manual", position: 5, description: "Einrichtung Router", unit: nil} =
+                 setup
+             ] = draft.items
+
+      assert cable.minutes == nil and cable.hours == nil and cable.hourly_rate == nil
+      assert Decimal.equal?(cable.quantity, 3)
+      assert Decimal.equal?(cable.unit_price, Decimal.new("4.50"))
+      assert Decimal.equal?(cable.amount, Decimal.new("13.50"))
+      assert Decimal.equal?(setup.amount, Decimal.new("49.00"))
+
+      # 7.5 hours at 80 plus 62.50 for the other items, with 19 % VAT on all.
+      assert Decimal.equal?(draft.net_total, Decimal.new("662.50"))
+      assert Decimal.equal?(draft.vat_total, Decimal.new("125.88"))
+      assert Decimal.equal?(draft.gross_total, Decimal.new("788.38"))
+
+      letter = Invoicing.letter(draft)
+      assert letter.item_columns == :quantity
+      assert %{quantity: "3", unit: "Stk.", price: "4,50 €"} = Enum.at(letter.items, 3)
+      assert %{quantity: "1,00", unit: "Std.", price: "80,00 €"} = Enum.at(letter.items, 2)
+
+      # The time sheet and the next invoice keep the text of the time
+      # without a project; the other items belong to no project.
+      descriptions = Enum.map(Invoicing.list_invoice_entries(draft), & &1.description)
+      assert "Dienstleistungen" in descriptions
+      refute "Einrichtung Router" in descriptions
+
+      assert Invoicing.new_invoice_params(~D[2026-12-03])["descriptions"]["none"] ==
+               "Dienstleistungen"
+    end
+
+    test "can bill other items only, without an hourly rate", ctx do
+      params =
+        draft_params(ctx.template, [], %{
+          "hourly_rate" => "",
+          "manual_items" => [
+            %{
+              "description" => "Router",
+              "quantity" => "1",
+              "unit" => "Stk.",
+              "unit_price" => "89,90"
+            }
+          ]
+        })
+
+      assert {:ok, draft} = Invoicing.create_draft(params)
+      assert [%{kind: "manual", position: 1, description: "Router"}] = draft.items
+      assert draft.hourly_rate == nil
+      assert Decimal.equal?(draft.gross_total, Decimal.new("89.90"))
+      assert Invoicing.entry_ids(draft) == []
+
+      letter = Invoicing.letter(draft)
+      assert letter.timesheet == nil
+      assert [%{quantity: "1", unit: "Stk.", amount: "89,90 €"}] = letter.items
+
+      assert {:ok, invoice} =
+               Invoicing.issue_invoice(draft, %{
+                 "number" => "2026-001",
+                 "invoice_date" => "2026-11-04"
+               })
+
+      assert invoice.status == "issued"
+      assert [%{kind: "manual"}] = invoice.items
+    end
+
+    test "report other items that are not complete", ctx do
+      params =
+        draft_params(ctx.template, ctx.entries, %{
+          "manual_items" => [
+            %{"id" => "a", "description" => "Router", "quantity" => "", "unit_price" => "89"},
+            %{"id" => "b", "description" => "Kabel", "quantity" => "2", "unit_price" => "abc"}
+          ]
+        })
+
+      assert {:error, changeset} = Invoicing.create_draft(params)
+      assert %{manual_items: ["complete or remove the items marked below"]} = errors_on(changeset)
+      assert Invoicing.list_invoices() == []
+
+      assert %{
+               manual_errors: %{
+                 "a" => %{"quantity" => "enter a quantity"},
+                 "b" => %{"unit_price" => "enter a price of at least 0 and below 100,000,000"}
+               },
+               items: []
+             } = Invoicing.preview([], params)
+
+      # Other items too large for one invoice are refused like time.
+      params =
+        draft_params(ctx.template, [], %{
+          "manual_items" => [
+            %{"description" => "A", "quantity" => "99", "unit_price" => "99999999"},
+            %{"description" => "B", "quantity" => "99", "unit_price" => "99999999"}
+          ]
+        })
+
+      assert {:error, changeset} = Invoicing.create_draft(params)
+      assert %{rates: ["the total is too large for one invoice"]} = errors_on(changeset)
+    end
+
+    test "keep their other items when edited, and a corrected invoice bills them again", ctx do
+      draft =
+        draft_fixture(ctx.template, ctx.entries, %{
+          "manual_items" => [
+            %{"description" => "Kabel", "quantity" => "2,5", "unit" => "m", "unit_price" => "1,2"}
+          ]
+        })
+
+      params = Invoicing.edit_invoice_params(draft)
+
+      assert [
+               %{
+                 "description" => "Kabel",
+                 "quantity" => "2,5",
+                 "unit" => "m",
+                 "unit_price" => "1,20"
+               }
+             ] =
+               params["manual_items"]
+
+      assert {:ok, again} = Invoicing.update_draft(draft, params)
+      assert items(again) == items(draft)
+
+      # A new invoice like this one does not bill the material again.
+      assert Invoicing.new_invoice_params(~D[2026-12-03], again)["manual_items"] == []
+
+      {:ok, issued} =
+        Invoicing.issue_invoice(again, %{"number" => "2026-001", "invoice_date" => "2026-11-04"})
+
+      {:ok, cancelled} = Invoicing.cancel_invoice(issued)
+
+      assert [%{"description" => "Kabel", "quantity" => "2,5"}] =
+               Invoicing.manual_item_rows(cancelled)
+    end
+
+    test "the database keeps items of time and other items apart", ctx do
+      %{items: [item | _]} = draft_fixture(ctx.template, ctx.entries)
+
+      assert_raise Postgrex.Error, ~r/invoice_items_kind_valid/, fn ->
+        Repo.update_all(from(it in InvoiceItem, where: it.id == ^item.id), set: [kind: "manual"])
+      end
     end
 
     test "need a recipient that fits the address field of the letter", ctx do
@@ -884,6 +1062,14 @@ defmodule PotionZeitgeist.InvoicingTest do
 
     assert {:error, changeset} = Invoicing.update_template(template, %{"name" => "Renamed"})
     assert errors_on(changeset) == %{sender: ["has 8 lines, the letterhead has room for 7"]}
+  end
+
+  defp items(invoice) do
+    Enum.map(invoice.items, fn item ->
+      {item.kind, item.position, item.description,
+       item.quantity && Decimal.to_string(item.quantity), item.unit,
+       Decimal.to_string(item.amount)}
+    end)
   end
 
   defp ids(entries), do: Enum.map(entries, & &1.id)
