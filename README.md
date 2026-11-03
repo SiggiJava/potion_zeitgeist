@@ -78,7 +78,11 @@ mix assets.build
 mix phx.server
 ```
 
-`mix assets.build` rebuilds the stylesheet and JavaScript, so new pages get their icons and styles even when the asset watchers of `mix phx.server` did not pick up the change. Reload the page with Ctrl+F5 afterwards.
+`mix assets.build` rebuilds the stylesheet and JavaScript, so new pages get their icons and styles even when the asset watchers of `mix phx.server` did not pick up the change. Reload the page without the cache afterwards (Safari: Option+Command+R, Chrome on a Mac: Shift+Command+R, Windows: Ctrl+F5).
+
+If you start the app with `MIX_ENV=prod`, run `mix assets.deploy` instead of `mix assets.build`. In production mode the server delivers the digested copy of the stylesheet that `priv/static/cache_manifest.json` names, and only `mix assets.deploy` writes a new one; restart the server afterwards.
+
+When the stylesheet a page is loaded with lacks icons that the pages use, the app shows a red note at the bottom of the page with these steps. The icons are then invisible, and buttons with an icon look as if their text were pushed to the right. The note only looks at icons: an outdated stylesheet can also miss other styles of a new page without any new icon, so rebuild it after every update.
 
 ### 6. Create the administrator account
 
