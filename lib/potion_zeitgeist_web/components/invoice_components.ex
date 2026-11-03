@@ -215,6 +215,7 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
       <div class="inv-toolbar-end">
         <span class="inv-toolbar-hint">
           For a PDF, choose "Save as PDF" in the print dialog and keep the scale at 100 %.
+          In Safari, also turn off "Print headers and footers".
         </span>
         <span id="inv-layout-warning" class="inv-toolbar-warning" hidden>
           This browser sets the letter text wider than planned, so the address may not sit in
@@ -249,8 +250,14 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
         }
 
         // Runs again whenever fonts finish loading, so a layout measured with
-        // a fallback font while the invoice font loads is corrected.
+        // a fallback font while the invoice font loads is corrected. It
+        // changes the page only when a value changes, and never while the
+        // browser prints: Safari prints blank pages when the layout changes
+        // during printing.
+        var printing = false;
+
         function check() {
+          if (printing) return;
           var doc = document.querySelector(".inv-document");
           if (!doc) return;
 
@@ -260,7 +267,9 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
           var planned = Number(doc.getAttribute("data-footer-lines"));
           var needed = footer ? (footer.getBoundingClientRect().height / mm - 2.5) / 3.6 : 0;
           var lines = needed > planned + 0.25 ? needed.toFixed(2) : String(planned);
-          doc.style.setProperty("--inv-footer-lines", lines);
+          if (doc.style.getPropertyValue("--inv-footer-lines").trim() !== lines) {
+            doc.style.setProperty("--inv-footer-lines", lines);
+          }
 
           var wide = false;
           doc.querySelectorAll("[data-lines]").forEach(function (box) {
@@ -270,16 +279,26 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
             var count = Math.round(height / parseFloat(getComputedStyle(box).lineHeight));
             if (count > Number(box.getAttribute("data-lines"))) wide = true;
           });
-          document.getElementById("inv-layout-warning").hidden = !wide;
+          var warning = document.getElementById("inv-layout-warning");
+          if (warning.hidden === wide) warning.hidden = !wide;
+        }
+
+        function printInvoice() {
+          check();
+          window.print();
         }
 
         document.addEventListener("DOMContentLoaded", function () { fonts().then(check); });
         if (document.fonts) document.fonts.addEventListener("loadingdone", check);
-        window.addEventListener("beforeprint", check);
+        window.addEventListener("beforeprint", function () { printing = true; });
+        window.addEventListener("afterprint", function () { printing = false; check(); });
 
         document.getElementById("print-invoice").addEventListener("click", function () {
-          // Print with the invoice font, not a fallback that is still loading.
-          fonts().then(function () { check(); window.print(); });
+          // Print with the invoice font, not a fallback that is still loading;
+          // with the fonts there, right away within the click, as browsers
+          // expect a print request.
+          if (!document.fonts || document.fonts.status === "loaded") printInvoice();
+          else fonts().then(printInvoice);
         });
       })();
     </script>
@@ -290,6 +309,8 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
   The footer and the watermark of a letter once more, for the print page to
   put directly into `<body>`. Only these copies are printed there: Chromium
   repeats fixed boxes on every page only from `<body>`, see invoice.css.
+  Safari and the other WebKit browsers print the copies in the sheets
+  instead.
   """
   attr :letter, :map, required: true
 

@@ -75,6 +75,8 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert letter_classes(show) |> Enum.reject(&String.starts_with?(&1, "inv-")) == []
     # Printed from this page, the letter gives way to a hint to use the print page.
     assert has_element?(show, "#invoice-letter .inv-print-hint", "Print / PDF")
+    # The pages without margins belong to the print page only.
+    refute render(show) =~ ~r/@page\s*\{/
 
     show |> element("#issue-invoice") |> render_click()
     assert has_element?(show, "#last-issued", "first invoice")
@@ -105,6 +107,11 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     # The pages keep room for the footer's two lines (tax number, bank).
     assert html =~ ~s(style="--inv-footer-lines: 2")
     assert html =~ "body:not(.inv-print-page) .inv-sheet"
+    # A4 pages without margins, and WebKit (Safari) marked before the page is
+    # laid out, as it prints footer and watermark from the sheets.
+    assert html =~ ~r/@page \{\s+size: A4;\s+margin: 0;\s+\}/
+    assert html =~ ~s[classList.add("inv-webkit")]
+    assert html =~ ".inv-webkit .inv-print-page .inv-sheet .inv-footer"
     # The print page checks the lines the browser prints: the boxes carry
     # their limits, and the toolbar has a warning for a wider layout.
     assert html =~ ~s(data-footer-lines="2")

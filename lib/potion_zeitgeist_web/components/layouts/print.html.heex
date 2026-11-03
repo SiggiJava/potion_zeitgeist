@@ -31,6 +31,24 @@
       crossorigin
     />
     {PotionZeitgeistWeb.InvoiceComponents.invoice_style()}
+    <%!-- A4 pages without margins, so the sheets print at their own size and
+         Chrome, Edge and Firefox print no date, title or address lines on
+         the invoice (Safari only without "Print headers and footers"). Only
+         on this page: printed from any other page, the margins stay. --%>
+    <style>
+      @page {
+        size: A4;
+        margin: 0;
+      }
+    </style>
+    <%!-- Safari and the other WebKit browsers print the footer and the
+         watermark from the sheets, see invoice.css. Set before the page is
+         laid out, so nothing changes on the page when printing starts. --%>
+    <script>
+      if (navigator.vendor === "Apple Computer, Inc.") {
+        document.documentElement.classList.add("inv-webkit");
+      }
+    </script>
   </head>
   <body class="inv-print-page">
     {@inner_content}
