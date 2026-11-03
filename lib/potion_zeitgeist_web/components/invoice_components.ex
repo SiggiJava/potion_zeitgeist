@@ -252,12 +252,9 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
         // Runs again whenever fonts finish loading, so a layout measured with
         // a fallback font while the invoice font loads is corrected. It
         // changes the page only when a value changes, and never while the
-        // browser prints: Safari prints blank pages when the layout changes
-        // during printing.
-        var printing = false;
-
+        // page is laid out for printing.
         function check() {
-          if (printing) return;
+          if (window.matchMedia && window.matchMedia("print").matches) return;
           var doc = document.querySelector(".inv-document");
           if (!doc) return;
 
@@ -283,20 +280,28 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
           if (warning.hidden === wide) warning.hidden = !wide;
         }
 
+        // Safari prints no pages at all when print() runs within the click,
+        // while printing from its menu (Cmd+P) works. So the button prints a
+        // moment later, once the browser has updated the page after the
+        // click, and the page runs no script of its own while it prints (no
+        // beforeprint or afterprint handlers).
+        var printRequested = false;
+
         function printInvoice() {
           check();
-          window.print();
+          setTimeout(function () {
+            printRequested = false;
+            window.print();
+          }, 200);
         }
 
         document.addEventListener("DOMContentLoaded", function () { fonts().then(check); });
         if (document.fonts) document.fonts.addEventListener("loadingdone", check);
-        window.addEventListener("beforeprint", function () { printing = true; });
-        window.addEventListener("afterprint", function () { printing = false; check(); });
 
         document.getElementById("print-invoice").addEventListener("click", function () {
-          // Print with the invoice font, not a fallback that is still loading;
-          // with the fonts there, right away within the click, as browsers
-          // expect a print request.
+          if (printRequested) return;
+          printRequested = true;
+          // Print with the invoice font, not a fallback that is still loading.
           if (!document.fonts || document.fonts.status === "loaded") printInvoice();
           else fonts().then(printInvoice);
         });
