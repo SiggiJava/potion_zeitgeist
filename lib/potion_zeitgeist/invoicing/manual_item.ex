@@ -34,12 +34,16 @@ defmodule PotionZeitgeist.Invoicing.ManualItem do
   @doc "Units the form suggests."
   def unit_suggestions, do: ~w(Stk. Std. Tag Pauschale kg m m² Monat Lizenz)
 
-  @doc "A row for the form, with an id that tells it apart from the other rows."
+  @doc """
+  A row for the form, with an id that tells it apart from the other rows.
+  The ids are random, so they do not repeat the ids of rows a browser sends
+  back after a server restart (see the form's `"recover"` event).
+  """
   def new_row(values \\ %{}) do
     @fields
     |> Map.new(&{&1, ""})
     |> Map.merge(Map.take(values, @fields))
-    |> Map.put("id", "item-" <> Integer.to_string(System.unique_integer([:positive])))
+    |> Map.put("id", "item-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower))
   end
 
   @doc "The form row of a saved manual item, with numbers as Germans type them."
@@ -91,7 +95,7 @@ defmodule PotionZeitgeist.Invoicing.ManualItem do
   """
   def parse(row) do
     description = value(row, "description")
-    unit = row |> value("unit") |> LetterLayout.clean() |> String.trim()
+    unit = value(row, "unit")
     quantity = row |> value("quantity") |> parse_number(3)
     unit_price = row |> value("unit_price") |> parse_number(2)
 
@@ -129,14 +133,20 @@ defmodule PotionZeitgeist.Invoicing.ManualItem do
     end
   end
 
-  # Values as typed, trimmed. Line breaks (which a text field cannot hold,
-  # but a request can) print as spaces in the table. Anything but text and
-  # numbers counts as blank.
+  # Values as typed, trimmed, without invisible characters (which a pasted
+  # number can hold, see `PotionZeitgeist.Invoicing.LetterLayout.clean/1`).
+  # Line breaks (which a text field cannot hold, but a request can) print as
+  # spaces in the table. Anything but text and numbers counts as blank.
   defp value(row, field) do
     case Map.get(row, field) do
-      value when is_binary(value) -> value |> String.replace(~r/\s+/u, " ") |> String.trim()
-      value when is_number(value) -> to_string(value)
-      _other -> ""
+      value when is_binary(value) ->
+        value |> LetterLayout.clean() |> String.replace(~r/\s+/u, " ") |> String.trim()
+
+      value when is_number(value) ->
+        to_string(value)
+
+      _other ->
+        ""
     end
   end
 
@@ -146,7 +156,9 @@ defmodule PotionZeitgeist.Invoicing.ManualItem do
   or "12.500", separate thousands; "0.125" and "2.50" have a decimal point.
   """
   def parse_number_text(text) when is_binary(text) do
-    text = String.replace(text, ~r/[\s\x{00A0}\x{202F}]/u, "")
+    # Spaces, also non-breaking ones, and invisible characters such as
+    # U+200B, which copying a number from a web page or PDF can bring along.
+    text = String.replace(text, ~r/[\s\x{00A0}\x{202F}\p{Cf}]/u, "")
 
     text =
       cond do

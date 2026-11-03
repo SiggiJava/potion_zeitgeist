@@ -289,6 +289,25 @@ defmodule PotionZeitgeistWeb.InvoicesLiveTest do
     assert manual_row_ids(view) == ["item-7", "item-9"]
     assert has_element?(view, "#item-9-description[value='Kabel']")
     assert has_element?(view, "#invoice-recipient", "Neu GmbH")
+
+    # A repeated id (a row added after a server restart could get one) gets
+    # an id of its own, so the rows stay apart.
+    render_change(view, "recover", %{
+      "invoice" => %{
+        "manual_items" => %{
+          "0" => %{"id" => "item-7", "description" => "Router"},
+          "1" => %{"id" => "item-7", "description" => "Stecker"}
+        }
+      }
+    })
+
+    assert ["item-7", other] = manual_row_ids(view)
+    assert other =~ ~r/^item-[0-9a-f]{16}$/
+    assert has_element?(view, "#item-7-description[value='Router']")
+    assert has_element?(view, "##{other}-description[value='Stecker']")
+
+    view |> element("#item-7-remove") |> render_click()
+    assert manual_row_ids(view) == [other]
   end
 
   test "a draft can be edited and a stale edit page cannot change an issued invoice", ctx do

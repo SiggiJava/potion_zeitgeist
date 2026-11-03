@@ -46,7 +46,7 @@ defmodule PotionZeitgeist.Invoicing.Letter do
     {"monat", "Billed month, e.g. Oktober 2026"},
     {"empfaenger", "Recipient address"},
     {"positionen", "Table of items with totals (letter text only)"},
-    {"stunden", "Total hours of the time entries"},
+    {"stunden", "Total hours of the time entries (empty without time entries)"},
     {"gesamtbetrag", "Total amount due"},
     {"netto", "Net amount (only with VAT)"},
     {"ust_satz", "VAT rate (only with VAT)"},
@@ -314,7 +314,13 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       "leistungszeitraum" => Format.period(invoice.period_start, invoice.period_end),
       "monat" => if(invoice.period_start, do: Format.month(invoice.period_start), else: ""),
       "empfaenger" => invoice.recipient || "",
-      "stunden" => Format.hours(totals.hours),
+      # Empty on invoices of other items only, so that a block such as
+      # {{#stunden}}…{{/stunden}} can leave the hours out.
+      "stunden" =>
+        if(Enum.any?(invoice.items, &InvoiceItem.time?/1),
+          do: Format.hours(totals.hours),
+          else: ""
+        ),
       "gesamtbetrag" => Format.money(totals.gross),
       "netto" => if(vat?, do: Format.money(totals.net), else: ""),
       "ust_satz" => if(vat?, do: Format.percent(invoice.vat_rate), else: ""),

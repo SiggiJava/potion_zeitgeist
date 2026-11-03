@@ -126,13 +126,28 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
   # After a reconnect the browser sends the form as it was to a freshly
   # mounted page, which does not know the rows of other items added or
-  # removed before, so they are taken over as sent.
+  # removed before, so they are taken over as sent. A row whose id repeats
+  # one before it gets an id of its own, so that typing into it or
+  # removing it never changes the other row.
   @impl true
-  def handle_event("recover", %{"invoice" => incoming}, socket) do
-    rows = incoming |> ManualItem.rows() |> Enum.map(&recovered_row/1)
-    socket = assign(socket, :params, Map.put(socket.assigns.params, "manual_items", rows))
+  def handle_event("recover", %{"invoice" => incoming}, socket) when is_map(incoming) do
+    {rows, _ids} =
+      incoming
+      |> ManualItem.rows()
+      |> Enum.map(&recovered_row/1)
+      |> Enum.map_reduce(MapSet.new(), fn row, ids ->
+        row =
+          if MapSet.member?(ids, row["id"]),
+            do: ManualItem.new_row(Map.take(row, ManualItem.fields())),
+            else: row
 
-    {:noreply, socket |> apply_params(incoming, nil) |> assign(:errors, []) |> refresh()}
+        {row, MapSet.put(ids, row["id"])}
+      end)
+
+    socket = put_manual_rows(socket, rows)
+    others = Map.delete(incoming, "manual_items")
+
+    {:noreply, socket |> apply_params(others, nil) |> assign(:errors, []) |> refresh()}
   end
 
   def handle_event("recover", _params, socket), do: {:noreply, socket}

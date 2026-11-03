@@ -240,6 +240,36 @@ defmodule PotionZeitgeist.Invoicing.LetterTest do
     assert letter.totals == [{"Gesamtbetrag", "769,20 €"}]
   end
 
+  test "{{stunden}} is empty on an invoice of other items only, so a block can leave it out" do
+    body = "{{positionen}}\n{{#stunden}}{{stunden}} Stunden, {{/stunden}}{{gesamtbetrag}}"
+
+    items = [
+      %{
+        kind: "manual",
+        position: 1,
+        description: "Einrichtung",
+        quantity: Decimal.new("1.000"),
+        unit: "Pauschale",
+        unit_price: Decimal.new("99.00"),
+        amount: Decimal.new("99.00")
+      }
+    ]
+
+    invoice =
+      issued_invoice(%{
+        items: items,
+        net_total: Decimal.new("99.00"),
+        gross_total: Decimal.new("99.00"),
+        letter_body: body
+      })
+
+    assert Letter.vars(invoice)["stunden"] == ""
+    assert Letter.build(invoice).after_items == "99,00 €"
+
+    assert Letter.build(issued_invoice(%{letter_body: body})).after_items ==
+             "2,00 Stunden, 170,00 €"
+  end
+
   test "an invoice without a due date prints none" do
     body =
       "Leistungen {{monat}}:\n{{positionen}}\n\n" <>

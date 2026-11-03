@@ -52,7 +52,11 @@ defmodule PotionZeitgeist.Invoicing.ManualItemTest do
           {"0.125", "0.125"},
           {"1 250,5", "1250.5"},
           {",5", "0.5"},
-          {"85", "85"}
+          {"85", "85"},
+          # Invisible characters, as copying from a web page or PDF brings along.
+          {"49,95\u200B", "49.95"},
+          {"\uFEFF1.250,00", "1250.00"},
+          {"2\u00AD5", "25"}
         ] do
       assert Decimal.equal?(ManualItem.parse_number_text(text), Decimal.new(number)), text
     end
@@ -119,10 +123,16 @@ defmodule PotionZeitgeist.Invoicing.ManualItemTest do
 
     assert item.description == "Kabel und Stecker"
     assert item.unit == "kg"
+
+    assert {:ok, %{quantity: quantity, description: "Kabel"}} =
+             ManualItem.parse(row(%{"description" => "Ka\u200Bbel", "quantity" => "\u200E3"}))
+
+    assert Decimal.equal?(quantity, 3)
   end
 
   test "blank rows and rows sent as a map in their order" do
     assert ManualItem.blank?(%{"description" => " ", "quantity" => "", "id" => "item-1"})
+    assert ManualItem.blank?(%{"description" => "\u200B", "unit" => "\u2060 "})
     refute ManualItem.blank?(%{"unit_price" => "5"})
     # Anything but text counts as blank, rather than failing.
     assert ManualItem.blank?(%{"description" => %{"a" => "b"}, "quantity" => ["1"]})
@@ -163,5 +173,6 @@ defmodule PotionZeitgeist.Invoicing.ManualItemTest do
     assert {:ok, parsed} = ManualItem.parse(row)
     assert Decimal.equal?(parsed.quantity, item.quantity)
     assert ManualItem.to_row(item)["id"] != row["id"]
+    assert row["id"] =~ ~r/^item-[0-9a-f]{16}$/
   end
 end
