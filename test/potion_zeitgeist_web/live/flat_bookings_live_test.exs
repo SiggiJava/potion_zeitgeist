@@ -7,9 +7,17 @@ defmodule PotionZeitgeistWeb.FlatBookingsLiveTest do
   alias PotionZeitgeist.{Invoicing, TimeTracking}
 
   setup %{conn: conn} do
+    # Without an administrator the app asks for its setup first.
+    admin = admin_fixture()
     user = user_fixture(%{"name" => "Michael"})
     project = project_fixture(%{"name" => "Website"})
-    %{conn: Plug.Test.init_test_session(conn, user_id: user.id), user: user, project: project}
+
+    %{
+      conn: Plug.Test.init_test_session(conn, user_id: user.id),
+      admin: admin,
+      user: user,
+      project: project
+    }
   end
 
   test "users book, change and delete their flat hours", ctx do
@@ -97,7 +105,7 @@ defmodule PotionZeitgeistWeb.FlatBookingsLiveTest do
   end
 
   test "administrators book flat hours for a user", ctx do
-    admin = admin_fixture()
+    admin = ctx.admin
     conn = Plug.Test.init_test_session(build_conn(), user_id: admin.id)
     {:ok, view, _html} = live(conn, ~p"/admin/users/#{ctx.user.id}/entries")
 
@@ -110,7 +118,7 @@ defmodule PotionZeitgeistWeb.FlatBookingsLiveTest do
   end
 
   test "the invoice form bills flat hours with the time of their project", ctx do
-    admin = admin_fixture()
+    admin = ctx.admin
     conn = Plug.Test.init_test_session(build_conn(), user_id: admin.id)
     template_fixture()
     entry = entry_fixture(ctx.user, "2026-10-02 08:00:00", "2026-10-02 09:30:00", ctx.project)
