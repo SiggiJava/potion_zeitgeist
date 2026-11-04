@@ -23,6 +23,12 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
      |> assign(:confirm_delete_id, nil)}
   end
 
+  # Messages of the flat hours section for the flash of the page.
+  @impl true
+  def handle_info({PotionZeitgeistWeb.FlatBookingsComponent, {:flash, kind, message}}, socket) do
+    {:noreply, put_flash(socket, kind, message)}
+  end
+
   @impl true
   def handle_event("edit", %{"id" => id}, socket) do
     entry = TimeTracking.get_entry!(id)
@@ -173,6 +179,13 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
           </a>
         </div>
       </div>
+
+      <.live_component
+        module={PotionZeitgeistWeb.FlatBookingsComponent}
+        id="flat-hours"
+        user_id={@viewed_user.id}
+        invoiced_message="These flat hours are on an invoice. Delete the draft or cancel the invoice to change them."
+      />
 
       <%= if @entries == [] do %>
         <div class="card bg-base-100 shadow">

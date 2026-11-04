@@ -1,11 +1,13 @@
 defmodule PotionZeitgeist.Invoicing.Calculation do
   @moduledoc """
-  Turns selected time entries into invoice items, and items into totals.
+  Turns selected time entries and flat hours into invoice items, and items
+  into totals.
 
-  Each entry counts with its duration rounded to full minutes, so the time
-  sheet rows add up to the item. Entries are grouped by project, each group is
-  billed in hours rounded to two decimals, and the amount is computed from
-  those rounded hours, so "hours × rate = amount" checks out on paper.
+  Each entry counts with its duration rounded to full minutes, flat hours
+  with their minutes, so the time sheet rows add up to the item. Entries and
+  flat hours are grouped by project, each group is billed in hours rounded
+  to two decimals, and the amount is computed from those rounded hours, so
+  "hours × rate = amount" checks out on paper.
   """
 
   alias PotionZeitgeist.Invoicing.InvoiceItem
@@ -20,22 +22,32 @@ defmodule PotionZeitgeist.Invoicing.Calculation do
   def item_key(project_id), do: to_string(project_id)
 
   @doc """
-  Groups completed entries (with `:project` preloaded) by project.
+  Groups completed entries and flat hours (see
+  `PotionZeitgeist.TimeTracking.FlatBooking`), both with `:project`
+  preloaded, by project.
 
   Returns one map per project, sorted by project name with "no project" last:
-  `%{key, project_id, project_name, minutes, entries}`.
+  `%{key, project_id, project_name, minutes, entries, bookings}`, where
+  `minutes` are those of the entries and the flat hours together.
   """
-  def group_entries(entries) do
-    entries
-    |> Enum.filter(& &1.clock_out)
-    |> Enum.group_by(& &1.project_id)
+  def group_entries(entries, bookings \\ []) do
+    entries = Enum.filter(entries, & &1.clock_out)
+
+    Enum.map(entries, &{:entry, &1})
+    |> Enum.concat(Enum.map(bookings, &{:booking, &1}))
+    |> Enum.group_by(fn {_kind, record} -> record.project_id end)
     |> Enum.map(fn {project_id, group} ->
+      time = for {:entry, entry} <- group, do: entry
+      flat = for {:booking, booking} <- group, do: booking
+
       %{
         key: item_key(project_id),
         project_id: project_id,
-        project_name: project_name(hd(group)),
-        minutes: group |> Enum.map(&entry_minutes/1) |> Enum.sum(),
-        entries: Enum.sort_by(group, & &1.clock_in, NaiveDateTime)
+        project_name: group |> hd() |> elem(1) |> project_name(),
+        minutes:
+          Enum.sum(Enum.map(time, &entry_minutes/1)) + Enum.sum(Enum.map(flat, & &1.minutes)),
+        entries: Enum.sort_by(time, & &1.clock_in, NaiveDateTime),
+        bookings: Enum.sort_by(flat, & &1.id)
       }
     end)
     |> Enum.sort_by(fn group ->

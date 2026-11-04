@@ -145,7 +145,7 @@ defmodule PotionZeitgeist.InvoicingTest do
 
       # The live summary shows the same rate and amounts.
       preview =
-        Invoicing.preview(Invoicing.billable_entries(~D[2026-10-01], draft), %{
+        Invoicing.preview(Invoicing.billable_entries(~D[2026-10-01], draft), [], %{
           "tax_mode" => "standard",
           "vat_rate" => "7,125",
           "hourly_rate" => "80"
@@ -243,7 +243,11 @@ defmodule PotionZeitgeist.InvoicingTest do
                )
 
       errors = errors_on(changeset)
-      assert errors.entries == ["select at least one time entry or add another item"]
+
+      assert errors.entries == [
+               "select at least one time entry or flat hours, or add another item"
+             ]
+
       # Without time to bill, no hourly rate is needed.
       refute Map.has_key?(errors, :hourly_rate)
       assert [_] = errors.recipient
@@ -368,7 +372,7 @@ defmodule PotionZeitgeist.InvoicingTest do
                  "b" => %{"unit_price" => "enter a price of at least 0 and below 100,000,000"}
                },
                items: []
-             } = Invoicing.preview([], params)
+             } = Invoicing.preview([], [], params)
 
       # Other items too large for one invoice are refused like time.
       params =

@@ -47,17 +47,19 @@ defmodule PotionZeitgeist.Projects do
   end
 
   @doc """
-  Deletes a project that has no booked time. Projects with bookings must be
-  archived instead (`active: false`), so recorded working time keeps its project.
+  Deletes a project that has no booked time (time entries or flat hours).
+  Projects with bookings must be archived instead (`active: false`), so
+  recorded working time keeps its project.
   """
   def delete_project(%Project{} = project) do
     project
     |> Ecto.Changeset.change()
     |> Ecto.Changeset.no_assoc_constraint(:time_entries)
+    |> Ecto.Changeset.no_assoc_constraint(:flat_bookings)
     |> Repo.delete()
     |> case do
       {:error, %Ecto.Changeset{errors: errors} = changeset} ->
-        if Keyword.has_key?(errors, :time_entries),
+        if Keyword.has_key?(errors, :time_entries) or Keyword.has_key?(errors, :flat_bookings),
           do: {:error, :has_entries},
           else: {:error, changeset}
 

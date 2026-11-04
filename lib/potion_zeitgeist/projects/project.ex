@@ -8,6 +8,7 @@ defmodule PotionZeitgeist.Projects.Project do
     field :active, :boolean, default: true
 
     has_many :time_entries, PotionZeitgeist.TimeTracking.TimeEntry
+    has_many :flat_bookings, PotionZeitgeist.TimeTracking.FlatBooking
 
     timestamps()
   end

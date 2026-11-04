@@ -3,7 +3,7 @@ defmodule PotionZeitgeist.TimeTracking do
 
   alias PotionZeitgeist.{Invoicing, Projects, Repo}
   alias PotionZeitgeist.Invoicing.InvoiceEntry
-  alias PotionZeitgeist.TimeTracking.{Export, TimeEntry}
+  alias PotionZeitgeist.TimeTracking.{Export, FlatBooking, TimeEntry}
 
   def get_active_entry(user_id) do
     Repo.one(
@@ -222,6 +222,91 @@ defmodule PotionZeitgeist.TimeTracking do
 
   def change_entry(%TimeEntry{} = entry, attrs \\ %{}) do
     TimeEntry.edit_changeset(entry, attrs)
+  end
+
+  ## Flat hours
+
+  @doc """
+  Flat hours of a user (see `PotionZeitgeist.TimeTracking.FlatBooking`),
+  newest month first, with `invoiced` set for those on a draft or issued
+  invoice.
+  """
+  def list_flat_bookings(user_id) do
+    Repo.all(
+      from b in FlatBooking,
+        left_join: ie in InvoiceEntry,
+        on: ie.flat_booking_id == b.id and ie.active,
+        where: b.user_id == ^user_id,
+        order_by: [desc: b.month, desc: b.id],
+        select_merge: %{invoiced: not is_nil(ie.id)},
+        preload: [:project]
+    )
+  end
+
+  @doc "Flat hours of the user, or `nil` when they do not exist (any more)."
+  def get_flat_booking(id, user_id) do
+    case Repo.get_by(FlatBooking, id: id, user_id: user_id) do
+      nil -> nil
+      booking -> Repo.preload(booking, :project)
+    end
+  end
+
+  @doc "Books flat hours for the user, to an active project or to none."
+  def create_flat_booking(user_id, attrs) do
+    %FlatBooking{user_id: user_id}
+    |> FlatBooking.changeset(attrs)
+    |> validate_bookable_project()
+    |> Repo.insert()
+  end
+
+  @doc """
+  Updates flat hours. Those on a draft or issued invoice cannot be changed
+  and return `{:error, :invoiced}`, those deleted in the meantime
+  `{:error, :not_found}`.
+  """
+  def update_flat_booking(%FlatBooking{} = booking, attrs) do
+    unless_booking_invoiced(booking, fn current ->
+      current
+      |> FlatBooking.changeset(attrs)
+      |> validate_bookable_project()
+      |> Repo.update()
+    end)
+  end
+
+  @doc """
+  Deletes flat hours, unless they are on a draft or issued invoice
+  (`{:error, :invoiced}`). Returns `{:error, :not_found}` when they were
+  deleted already.
+  """
+  def delete_flat_booking(%FlatBooking{} = booking) do
+    unless_booking_invoiced(booking, &Repo.delete/1)
+  end
+
+  def change_flat_booking(%FlatBooking{} = booking, attrs \\ %{}) do
+    FlatBooking.changeset(booking, attrs)
+  end
+
+  # As `unless_invoiced/2` for time entries: the row lock waits for an
+  # invoice that is being saved with these flat hours right now. `change`
+  # gets the flat hours as they are now.
+  defp unless_booking_invoiced(%FlatBooking{id: id}, change) do
+    Repo.transaction(fn ->
+      current = Repo.one(from b in FlatBooking, where: b.id == ^id, lock: "FOR UPDATE")
+
+      cond do
+        is_nil(current) ->
+          Repo.rollback(:not_found)
+
+        Invoicing.booking_invoiced?(id) ->
+          Repo.rollback(:invoiced)
+
+        true ->
+          case change.(current) do
+            {:ok, result} -> result
+            {:error, reason} -> Repo.rollback(reason)
+          end
+      end
+    end)
   end
 
   def today_total_seconds(user_id) do
