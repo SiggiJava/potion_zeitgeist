@@ -49,7 +49,7 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
   # Records the payment of an invoice of the list of invoices not paid yet.
   # A date that cannot be saved stays in its field with the reason.
   @impl true
-  def handle_event("mark_paid", %{"id" => id, "payment" => params}, socket) do
+  def handle_event("mark_paid", %{"invoice_id" => id, "payment" => params}, socket) do
     result =
       case Invoicing.get_invoice(id) do
         nil -> {:error, :not_found}
@@ -327,7 +327,7 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
                     novalidate
                     class="flex flex-wrap items-center gap-2"
                   >
-                    <input type="hidden" name="id" value={row.id} />
+                    <input type="hidden" name="invoice_id" value={row.id} />
                     <input
                       type="date"
                       name="payment[paid_on]"
