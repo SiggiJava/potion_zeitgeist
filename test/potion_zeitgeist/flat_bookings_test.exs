@@ -84,6 +84,13 @@ defmodule PotionZeitgeist.FlatBookingsTest do
       booking = flat_booking_fixture(ctx.user, "2026-10-01", "120")
       assert {:error, changeset} = TimeTracking.update_flat_booking(booking, %{"hours" => ""})
       assert %{hours: ["enter the hours, such as 120 or 120:30"]} = errors_on(changeset)
+
+      # So is clearing the month.
+      assert {:error, changeset} = TimeTracking.update_flat_booking(booking, %{"month" => ""})
+      assert %{month: ["pick a month"]} = errors_on(changeset)
+
+      assert %{month: ["pick a month"]} =
+               errors_on(TimeTracking.change_flat_booking(booking, %{"month" => ""}))
     end
 
     test "go to active projects, and keep a project archived since", ctx do

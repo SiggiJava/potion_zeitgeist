@@ -48,7 +48,7 @@ defmodule PotionZeitgeist.TimeTracking.FlatBooking do
   def changeset(booking, attrs) do
     %{booking | hours: booking.hours || (booking.minutes && hours_text(booking.minutes))}
     |> cast(attrs, [:month, :hours, :notes, :project_id])
-    |> update_change(:month, &Date.beginning_of_month/1)
+    |> update_change(:month, &(&1 && Date.beginning_of_month(&1)))
     |> validate_required([:month], message: "pick a month")
     |> cast_hours()
     |> validate_length(:notes, max: @max_notes)
