@@ -46,6 +46,27 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
     {:noreply, push_patch(socket, to: report_path(year, socket.assigns.basis))}
   end
 
+  # Keeps the date typed into a row of the invoices not paid yet, so it
+  # stays when another row is saved and the list is drawn again.
+  @impl true
+  def handle_event("payment_input", %{"invoice_id" => id, "payment" => payment}, socket) do
+    case {Integer.parse(id), payment} do
+      {{id, ""}, %{"paid_on" => value}} when is_binary(value) ->
+        payments =
+          Map.update(
+            socket.assigns.payments,
+            id,
+            %{value: value, errors: []},
+            &%{&1 | value: value}
+          )
+
+        {:noreply, assign(socket, :payments, payments)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   # Records the payment of an invoice of the list of invoices not paid yet.
   # A date that cannot be saved stays in its field with the reason.
   @impl true
@@ -95,6 +116,8 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
     ~p"/admin/invoices/annual/#{report.year}/print?#{[basis: report.basis]}"
   end
 
+  defp payment_errors?(payments, id), do: get_in(payments, [id, :errors]) not in [nil, []]
+
   defp payment_value(payments, row, today) do
     case payments do
       %{^row => %{value: value}} -> value
@@ -136,7 +159,7 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
             <td class="text-sm whitespace-nowrap">{Format.date(row.invoice_date)}</td>
             <td :if={@paid?} class="text-sm whitespace-nowrap">{Format.date(row.paid_on)}</td>
             <td :if={@cancelled?} class="text-sm whitespace-nowrap">
-              {row.cancelled_at && Format.date(DateTime.to_date(row.cancelled_at))}
+              {Format.date(row.cancelled_on)}
             </td>
             <td class="text-sm max-w-xs truncate">{row.recipient}</td>
             <td class="text-right font-mono text-sm whitespace-nowrap">{Format.hours(row.hours)}</td>
@@ -323,6 +346,7 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
                 <td>
                   <form
                     id={"pay-#{row.id}"}
+                    phx-change="payment_input"
                     phx-submit="mark_paid"
                     novalidate
                     class="flex flex-wrap items-center gap-2"
@@ -336,7 +360,7 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
                       max={Date.to_iso8601(@today)}
                       class={[
                         "input input-sm w-40",
-                        Map.has_key?(@payments, row.id) && "input-error"
+                        payment_errors?(@payments, row.id) && "input-error"
                       ]}
                     />
                     <button type="submit" class="btn btn-sm gap-2" phx-disable-with="Saving...">
@@ -372,7 +396,6 @@ defmodule PotionZeitgeistWeb.Admin.AnnualReportLive do
         <.invoice_table
           id="cancelled-invoices"
           rows={@report.cancelled}
-          paid?={false}
           cancelled?={true}
         />
       </section>

@@ -106,6 +106,27 @@ defmodule PotionZeitgeistWeb.AnnualReportLiveTest do
     assert has_element?(view, "#report-total", "420,00 €")
   end
 
+  test "a date typed for one open invoice stays when another one is paid", ctx do
+    other =
+      issued_fixture(ctx.template, [], "2026-003", "2026-11-03", %{
+        "manual_items" => manual_items([{"Support", "1", "", "50"}])
+      })
+
+    {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/annual?#{[year: 2026]}")
+
+    view
+    |> form("#pay-#{other.id}", %{payment: %{paid_on: "2026-11-01"}})
+    |> render_change()
+
+    view
+    |> form("#pay-#{ctx.open.id}", %{payment: %{paid_on: "2026-11-04"}})
+    |> render_submit()
+
+    assert has_element?(view, "#report-invoices-#{ctx.open.id}")
+    assert has_element?(view, ~s(#pay-#{other.id} input[type="date"][value="2026-11-01"]))
+    refute has_element?(view, "#pay-#{other.id} .input-error")
+  end
+
   test "an issued invoice records, changes and removes its payment date", ctx do
     {:ok, view, _html} = live(ctx.conn, ~p"/admin/invoices/#{ctx.open}")
 

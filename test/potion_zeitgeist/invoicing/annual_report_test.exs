@@ -180,6 +180,33 @@ defmodule PotionZeitgeist.Invoicing.AnnualReportTest do
     end
   end
 
+  test "the small business note needs every listed invoice without VAT" do
+    plain = invoice(id: 1, number: "2026-001", invoice_date: ~D[2026-01-02], items: [])
+
+    cancelled =
+      invoice(
+        id: 2,
+        number: "2026-002",
+        invoice_date: ~D[2026-01-05],
+        status: "cancelled",
+        cancelled_at: ~U[2026-03-31 22:30:00Z],
+        vat_rate: Decimal.new("19.00"),
+        items: [other_item(1, "Wartung", "1", nil, "100.00")]
+      )
+
+    report = AnnualReport.build(2026, "invoice", %{counted: [plain], cancelled: [cancelled]})
+    refute report.vat?
+    refute report.small_business?
+    assert hd(report.cancelled).cancelled_on == ~D[2026-03-31]
+
+    # The day in Germany, as the database gives it for the report.
+    loaded = %{cancelled | cancelled_on: ~D[2026-04-01]}
+    report = AnnualReport.build(2026, "invoice", %{counted: [plain], cancelled: [loaded]})
+    assert hd(report.cancelled).cancelled_on == ~D[2026-04-01]
+
+    assert AnnualReport.build(2026, "invoice", %{counted: [plain]}).small_business?
+  end
+
   test "a year without invoices has sums of zero" do
     report = AnnualReport.build(2025, "invoice", %{counted: []})
 

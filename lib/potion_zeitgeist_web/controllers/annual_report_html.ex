@@ -97,11 +97,20 @@ defmodule PotionZeitgeistWeb.AnnualReportHTML do
             </tfoot>
           </table>
 
-          <h2>Positionen</h2>
-          <p class="rpt-intro">
-            Zeit in Stunden zum Stundensatz und Einzelposten wie auf den Rechnungen, Beträge netto.
-          </p>
-          <section :for={row <- @report.invoices} id={"report-invoice-#{row.id}"} class="rpt-invoice">
+          <%!-- The heading sits in the first block, which is not split over
+               pages, so it never ends a page alone (Safari ignores
+               break-after). --%>
+          <section
+            :for={{row, index} <- Enum.with_index(@report.invoices)}
+            id={"report-invoice-#{row.id}"}
+            class="rpt-invoice"
+          >
+            <%= if index == 0 do %>
+              <h2>Positionen</h2>
+              <p class="rpt-intro rpt-intro-items">
+                Zeit in Stunden zum Stundensatz und Einzelposten wie auf den Rechnungen, Beträge netto.
+              </p>
+            <% end %>
             <div class="rpt-invoice-head">
               <h3>Rechnung {row.number} vom {Format.date(row.invoice_date)} · {row.recipient}</h3>
               <span class="rpt-muted rpt-small">{invoice_details(row)}</span>
@@ -169,7 +178,12 @@ defmodule PotionZeitgeistWeb.AnnualReportHTML do
           <p class="rpt-intro">
             Sie behalten ihre Nummer, zählen aber nicht und sind oben nicht enthalten.
           </p>
-          <.other_invoices id="report-cancelled" rows={@report.cancelled} cancelled?={true} />
+          <.other_invoices
+            id="report-cancelled"
+            rows={@report.cancelled}
+            paid?={true}
+            cancelled?={true}
+          />
         <% end %>
 
         <div class="rpt-notes">
@@ -177,7 +191,7 @@ defmodule PotionZeitgeistWeb.AnnualReportHTML do
             Diese Übersicht zählt nach Rechnungsdatum. In der Einnahmenüberschussrechnung zählen
             Einnahmen im Jahr ihres Zahlungseingangs (§ 11 EStG).
           </p>
-          <p :if={@report.invoices != [] && !@report.vat?}>
+          <p :if={@report.invoices != [] && @report.small_business?}>
             Alle Beträge ohne Umsatzsteuer: Die Rechnungen wurden als Kleinunternehmer nach
             § 19 UStG gestellt.
           </p>
@@ -214,7 +228,7 @@ defmodule PotionZeitgeistWeb.AnnualReportHTML do
           <td class="rpt-nowrap">{Format.date(row.invoice_date)}</td>
           <td :if={@paid?} class="rpt-nowrap">{Format.date(row.paid_on)}</td>
           <td :if={@cancelled?} class="rpt-nowrap">
-            {row.cancelled_at && Format.date(DateTime.to_date(row.cancelled_at))}
+            {Format.date(row.cancelled_on)}
           </td>
           <td class="rpt-wrap">{row.recipient}</td>
           <td class="rpt-num">{Format.money(row.gross)}</td>

@@ -1048,7 +1048,15 @@ defmodule PotionZeitgeist.Invoicing do
 
     invoices =
       queries
-      |> Map.put(:cancelled, where(dated_in_year, [i], i.status == "cancelled"))
+      |> Map.put(
+        :cancelled,
+        dated_in_year
+        |> where([i], i.status == "cancelled")
+        |> select_merge([i], %{
+          cancelled_on:
+            fragment("(? AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Berlin')::date", i.cancelled_at)
+        })
+      )
       |> Map.new(fn {key, query} ->
         {key, Repo.all(from i in query, preload: [items: :project])}
       end)

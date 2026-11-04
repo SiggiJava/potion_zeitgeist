@@ -197,12 +197,14 @@
   font-size: 12pt;
   font-weight: 700;
   break-after: avoid;
+  page-break-after: avoid;
 }
 
 .rpt-paper h3 {
   font-size: 10pt;
   font-weight: 600;
   break-after: avoid;
+  page-break-after: avoid;
 }
 
 .rpt-lead {
@@ -221,6 +223,17 @@
   margin-top: 1.5mm;
   color: #525252;
   font-size: 8.5pt;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+/* The heading of the items opens the first invoice block. */
+.rpt-invoice > h2 {
+  margin-bottom: 0;
+}
+
+.rpt-intro-items {
+  margin-bottom: 3mm;
 }
 
 /* Key figures of the year */

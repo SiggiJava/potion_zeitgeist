@@ -58,16 +58,22 @@ defmodule PotionZeitgeist.Invoicing.AnnualReport do
   """
   def build(year, basis, invoices) do
     rows = invoices |> Map.get(:counted, []) |> rows(basis)
+    unpaid = invoices |> Map.get(:unpaid, []) |> rows("invoice")
+    paid_later = invoices |> Map.get(:paid_later, []) |> rows("invoice")
+    cancelled = invoices |> Map.get(:cancelled, []) |> rows("invoice")
 
     %{
       year: year,
       basis: basis,
       invoices: rows,
-      unpaid: invoices |> Map.get(:unpaid, []) |> rows("invoice"),
-      paid_later: invoices |> Map.get(:paid_later, []) |> rows("invoice"),
-      cancelled: invoices |> Map.get(:cancelled, []) |> rows("invoice"),
+      unpaid: unpaid,
+      paid_later: paid_later,
+      cancelled: cancelled,
       totals: totals(rows),
-      vat?: Enum.any?(rows, & &1.vat?)
+      # VAT among the counted invoices, and whether every invoice the report
+      # lists was written as a small business (§ 19 UStG), without VAT.
+      vat?: Enum.any?(rows, & &1.vat?),
+      small_business?: not Enum.any?(rows ++ unpaid ++ paid_later ++ cancelled, & &1.vat?)
     }
   end
 
@@ -95,7 +101,7 @@ defmodule PotionZeitgeist.Invoicing.AnnualReport do
       number: invoice.number,
       invoice_date: invoice.invoice_date,
       paid_on: invoice.paid_on,
-      cancelled_at: invoice.cancelled_at,
+      cancelled_on: cancelled_on(invoice),
       recipient: recipient_name(invoice.recipient),
       period: Format.period(invoice.period_start, invoice.period_end),
       hours: if(time_items == [], do: nil, else: sum(time_items, :hours)),
@@ -167,6 +173,12 @@ defmodule PotionZeitgeist.Invoicing.AnnualReport do
     |> Enum.map(&String.trim/1)
     |> Enum.find("", &(&1 != ""))
   end
+
+  # The day of cancelling in Germany, which Invoicing.annual_report/2 reads
+  # from the database; the UTC date when it is not loaded.
+  defp cancelled_on(%{cancelled_on: %Date{} = date}), do: date
+  defp cancelled_on(%{cancelled_at: %DateTime{} = at}), do: DateTime.to_date(at)
+  defp cancelled_on(_invoice), do: nil
 
   defp project_name(%{project: %{name: name}}), do: name
   defp project_name(_item), do: nil
