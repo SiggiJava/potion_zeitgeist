@@ -79,6 +79,7 @@ defmodule PotionZeitgeistWeb.Router do
       live "/projects", Admin.ProjectsLive
       live "/invoices", Admin.InvoicesLive
       live "/invoices/new", Admin.InvoiceFormLive, :new
+      live "/invoices/annual", Admin.AnnualReportLive
       live "/invoices/:id", Admin.InvoiceLive
       live "/invoices/:id/edit", Admin.InvoiceFormLive, :edit
       live "/invoice-templates", Admin.InvoiceTemplatesLive
@@ -88,6 +89,10 @@ defmodule PotionZeitgeistWeb.Router do
 
     # Standalone A4 page to print an invoice or save it as PDF
     get "/invoices/:id/print", InvoiceController, :print
+
+    # The annual report of a year as CSV files and as a page to print
+    get "/invoices/annual/:year/csv", AnnualReportController, :csv
+    get "/invoices/annual/:year/print", AnnualReportController, :print
   end
 
   # Admin export routes

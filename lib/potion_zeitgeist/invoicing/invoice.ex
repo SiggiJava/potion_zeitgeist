@@ -34,6 +34,8 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
 
     field :issued_at, :utc_datetime
     field :cancelled_at, :utc_datetime
+    # The day the payment came in, see payment_changeset/3.
+    field :paid_on, :date
 
     belongs_to :template, PotionZeitgeist.Invoicing.InvoiceTemplate
     has_many :items, PotionZeitgeist.Invoicing.InvoiceItem, preload_order: [asc: :position]
@@ -115,6 +117,28 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
       letter_subject: letter.subject,
       letter_body: letter.body,
       letter_footer: letter.footer
+    )
+  end
+
+  @doc """
+  Records the day the payment of an issued invoice came in, from
+  `attrs["paid_on"]`. The day may not lie after `today` (in Germany).
+  It may lie before the invoice date, for a payment in advance.
+  """
+  def payment_changeset(invoice, attrs, today) do
+    invoice
+    |> cast(attrs, [:paid_on])
+    |> validate_required([:paid_on], message: "enter the day the payment came in")
+    |> validate_change(:paid_on, fn :paid_on, paid_on ->
+      cond do
+        Date.compare(paid_on, today) == :gt -> [paid_on: "must not be in the future"]
+        paid_on.year < 2000 -> [paid_on: "is not a valid date"]
+        true -> []
+      end
+    end)
+    |> check_constraint(:paid_on,
+      name: :invoices_paid_only_when_sent,
+      message: "can only be recorded for issued invoices"
     )
   end
 

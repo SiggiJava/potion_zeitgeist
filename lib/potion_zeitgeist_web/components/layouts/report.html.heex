@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <%!-- The title is the default file name when saving as PDF. --%>
+    <title>{assigns[:page_title] || "Einnahmenübersicht"}</title>
+    <%!-- Like the invoice print page, this page loads neither app.css nor
+         app.js: its styles come inline from ReportComponents, so an outdated
+         asset build cannot change the printed report. --%>
+    {PotionZeitgeistWeb.ReportComponents.report_style()}
+  </head>
+  <body class="rpt-page">
+    {@inner_content}
+  </body>
+</html>

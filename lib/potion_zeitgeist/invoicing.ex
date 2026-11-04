@@ -16,7 +16,7 @@ defmodule PotionZeitgeist.Invoicing do
   import Ecto.Query
 
   alias PotionZeitgeist.Repo
-  alias PotionZeitgeist.Invoicing.{Calculation, Invoice, InvoiceEntry, InvoiceItem}
+  alias PotionZeitgeist.Invoicing.{AnnualReport, Calculation, Invoice, InvoiceEntry, InvoiceItem}
   alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout, ManualItem}
   alias PotionZeitgeist.TimeTracking.TimeEntry
 
@@ -973,6 +973,102 @@ defmodule PotionZeitgeist.Invoicing do
       {:ok, invoice} -> {:ok, get_invoice!(invoice.id)}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  ## Payments and the annual report
+
+  @doc "The payment form of an issued invoice: its payment date, or `today`."
+  def change_payment(%Invoice{} = invoice, today) do
+    Invoice.payment_changeset(
+      invoice,
+      %{"paid_on" => Date.to_iso8601(invoice.paid_on || today)},
+      today
+    )
+  end
+
+  @doc """
+  Records the day the payment of an issued invoice came in, from
+  `params["paid_on"]`, or changes it. Fails with `:not_issued` when the
+  invoice is a draft or was cancelled, and with `:not_found` when it was
+  deleted.
+  """
+  def mark_paid(%Invoice{id: id}, params, today \\ today()) do
+    Repo.transaction(fn ->
+      invoice = lock_invoice!(id, "issued")
+
+      case invoice |> Invoice.payment_changeset(params, today) |> Repo.update() do
+        {:ok, invoice} -> invoice
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+    |> case do
+      {:ok, invoice} -> {:ok, get_invoice!(invoice.id)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc "Removes the payment date of an issued invoice, see `mark_paid/3`."
+  def mark_unpaid(%Invoice{id: id}) do
+    Repo.transaction(fn ->
+      id
+      |> lock_invoice!("issued")
+      |> Ecto.Changeset.change(paid_on: nil)
+      |> Repo.update!()
+    end)
+    |> case do
+      {:ok, invoice} -> {:ok, get_invoice!(invoice.id)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  The annual report of `year` on `basis`, `"paid"` (by the day the payment
+  came in, as for the EÜR) or `"invoice"` (by invoice date), see
+  `PotionZeitgeist.Invoicing.AnnualReport.build/3`.
+  """
+  def annual_report(year, basis) when basis in ["paid", "invoice"] do
+    {first, last} = AnnualReport.year_range(year)
+    issued = from(i in Invoice, where: i.status == "issued")
+
+    dated_in_year =
+      from(i in Invoice, where: i.invoice_date >= ^first and i.invoice_date <= ^last)
+
+    queries =
+      if basis == "paid" do
+        %{
+          counted: where(issued, [i], i.paid_on >= ^first and i.paid_on <= ^last),
+          unpaid: where(issued, [i], is_nil(i.paid_on) and i.invoice_date <= ^last),
+          paid_later:
+            where(issued, [i], i.invoice_date >= ^first and i.invoice_date <= ^last)
+            |> where([i], i.paid_on > ^last)
+        }
+      else
+        %{counted: where(issued, [i], i.invoice_date >= ^first and i.invoice_date <= ^last)}
+      end
+
+    invoices =
+      queries
+      |> Map.put(:cancelled, where(dated_in_year, [i], i.status == "cancelled"))
+      |> Map.new(fn {key, query} ->
+        {key, Repo.all(from i in query, preload: [items: :project])}
+      end)
+
+    AnnualReport.build(year, basis, invoices)
+  end
+
+  @doc """
+  The years to pick for the annual report, newest first: every year with an
+  issued or cancelled invoice or a payment, the year of `today` and the year
+  before (the one the EÜR is usually made for), and `shown`.
+  """
+  def report_years(%Date{} = today, shown \\ nil) do
+    Repo.all(from i in Invoice, where: i.status != "draft", select: [i.invoice_date, i.paid_on])
+    |> List.flatten()
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(& &1.year)
+    |> Enum.concat(Enum.reject([today.year, today.year - 1, shown], &is_nil/1))
+    |> Enum.uniq()
+    |> Enum.sort(:desc)
   end
 
   ## Invoice numbers

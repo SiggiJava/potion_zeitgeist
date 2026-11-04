@@ -1,0 +1,384 @@
+/*
+  The print page of the annual report (/admin/invoices/annual/:year/print).
+
+  Like invoice.css, this file is not part of the Tailwind build:
+  PotionZeitgeistWeb.ReportComponents reads it when the app is compiled and
+  the report layout sends it inline, so an outdated or missing app.css
+  cannot change the printed report. The page uses only the rpt-* classes
+  defined here.
+
+  The report is an ordinary document that flows over as many A4 pages as it
+  needs, with the page margins of the @page rule. Tables repeat their head
+  on every page. Nothing is placed absolutely or fixed, and no script runs
+  while the page prints, which keeps Safari from printing blank pages.
+*/
+
+@font-face {
+  font-family: "Report Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter/inter-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Report Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter/inter-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Report Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter/inter-latin-600-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Report Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter/inter-latin-ext-600-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Report Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/inter/inter-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Report Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/inter/inter-latin-ext-700-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* A4 with margins on every page, also for pages the report runs onto. */
+@page {
+  size: A4;
+  margin: 15mm 15mm 16mm 18mm;
+}
+
+/* ---- The page around the report (screen) ---- */
+
+.rpt-page {
+  margin: 0;
+  background: #e5e5e5;
+  color: #171717;
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.rpt-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #d4d4d4;
+  background: rgb(255 255 255 / 0.95);
+}
+
+.rpt-toolbar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.rpt-toolbar-hint {
+  color: #525252;
+  font-size: 13px;
+}
+
+.rpt-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: #171717;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.rpt-button:hover {
+  background: #f5f5f5;
+}
+
+.rpt-button-primary {
+  background: #ea6a12;
+  color: #fff;
+}
+
+.rpt-button-primary:hover {
+  background: #c9570c;
+}
+
+.rpt-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.rpt-main {
+  padding: 8mm 0;
+  overflow-x: auto;
+}
+
+/* ---- The report: a sheet of paper on screen, the pages when printed ---- */
+
+.rpt-paper {
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 15mm 15mm 16mm 18mm;
+  background: #fff;
+  color: #171717;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.15);
+  font-family: "Report Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 9.5pt;
+  font-weight: 400;
+  line-height: 1.4;
+  font-variant-ligatures: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.rpt-paper *,
+.rpt-paper *::before,
+.rpt-paper *::after {
+  box-sizing: border-box;
+}
+
+.rpt-paper h1,
+.rpt-paper h2,
+.rpt-paper h3,
+.rpt-paper p,
+.rpt-paper dl,
+.rpt-paper dd {
+  margin: 0;
+}
+
+.rpt-paper h1 {
+  font-size: 16pt;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.rpt-paper h2 {
+  margin-top: 8mm;
+  font-size: 12pt;
+  font-weight: 700;
+  break-after: avoid;
+}
+
+.rpt-paper h3 {
+  font-size: 10pt;
+  font-weight: 600;
+  break-after: avoid;
+}
+
+.rpt-lead {
+  margin-top: 2mm;
+}
+
+.rpt-muted {
+  color: #525252;
+}
+
+.rpt-small {
+  font-size: 8.5pt;
+}
+
+.rpt-intro {
+  margin-top: 1.5mm;
+  color: #525252;
+  font-size: 8.5pt;
+}
+
+/* Key figures of the year */
+.rpt-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4mm 10mm;
+  margin-top: 6mm;
+  padding: 4mm 5mm;
+  border: 0.5pt solid #d4d4d4;
+  border-radius: 1.5mm;
+  background: #fafafa;
+  break-inside: avoid;
+}
+
+.rpt-summary div {
+  min-width: 28mm;
+}
+
+.rpt-summary dt {
+  color: #525252;
+  font-size: 8.5pt;
+}
+
+.rpt-summary dd {
+  font-size: 12pt;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rpt-summary .rpt-total dd {
+  font-weight: 700;
+}
+
+/* ---- Tables ---- */
+
+.rpt-table {
+  width: 100%;
+  margin-top: 3mm;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 8.5pt;
+  line-height: 1.35;
+}
+
+.rpt-table thead {
+  display: table-header-group;
+}
+
+.rpt-table tfoot {
+  display: table-row-group;
+}
+
+.rpt-table tr {
+  break-inside: avoid;
+}
+
+.rpt-table th,
+.rpt-table td {
+  padding: 1.3mm 2mm 1.3mm 0;
+  vertical-align: top;
+  text-align: left;
+}
+
+.rpt-table th:last-child,
+.rpt-table td:last-child {
+  padding-right: 0;
+}
+
+.rpt-table th {
+  font-weight: 600;
+  border-bottom: 1pt solid #262626;
+}
+
+.rpt-table tbody td {
+  border-bottom: 0.5pt solid #d4d4d4;
+}
+
+.rpt-table tfoot td {
+  font-weight: 600;
+}
+
+.rpt-table tfoot tr:first-child td {
+  border-top: 1pt solid #262626;
+}
+
+.rpt-table .rpt-grand td {
+  font-weight: 700;
+}
+
+.rpt-num {
+  text-align: right !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.rpt-nowrap {
+  white-space: nowrap;
+}
+
+.rpt-wrap {
+  overflow-wrap: anywhere;
+}
+
+/* One block per invoice in the list of items */
+.rpt-invoice {
+  margin-top: 5mm;
+  break-inside: avoid;
+}
+
+.rpt-invoice-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1mm 6mm;
+  padding-bottom: 1mm;
+}
+
+.rpt-notes {
+  margin-top: 8mm;
+  padding-top: 3mm;
+  border-top: 0.5pt solid #d4d4d4;
+  color: #525252;
+  font-size: 8.5pt;
+}
+
+.rpt-notes p + p {
+  margin-top: 1.5mm;
+}
+
+.rpt-empty {
+  margin-top: 6mm;
+  color: #525252;
+}
+
+/* ---- Printing ---- */
+
+@media print {
+  .rpt-page {
+    background: #fff;
+  }
+
+  .rpt-toolbar {
+    display: none;
+  }
+
+  .rpt-main {
+    padding: 0;
+    overflow: visible;
+  }
+
+  /* The @page rule gives the margins of every page. */
+  .rpt-paper {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+}
