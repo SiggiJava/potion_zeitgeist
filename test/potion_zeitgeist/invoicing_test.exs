@@ -773,6 +773,175 @@ defmodule PotionZeitgeist.InvoicingTest do
     end
   end
 
+  describe "payments" do
+    test "are recorded on issued invoices, not in the future", ctx do
+      today = ~D[2026-11-04]
+      draft = draft_fixture(ctx.template, ctx.entries)
+
+      assert {:error, :not_issued} =
+               Invoicing.mark_paid(draft, %{"paid_on" => "2026-11-03"}, today)
+
+      {:ok, invoice} =
+        Invoicing.issue_invoice(draft, %{"number" => "2026-001", "invoice_date" => "2026-11-02"})
+
+      assert invoice.paid_on == nil
+      assert Invoicing.change_payment(invoice, today).changes == %{paid_on: today}
+
+      for {value, message} <- [
+            {"2026-11-05", "must not be in the future"},
+            {"", "enter the day the payment came in"},
+            {"2026-02-30", "is invalid"},
+            {"0026-11-03", "is not a valid date"}
+          ] do
+        assert {:error, changeset} = Invoicing.mark_paid(invoice, %{"paid_on" => value}, today)
+        assert errors_on(changeset) == %{paid_on: [message]}
+      end
+
+      # A payment in advance may come before the invoice date.
+      assert {:ok, paid} = Invoicing.mark_paid(invoice, %{"paid_on" => "2026-10-30"}, today)
+      assert paid.paid_on == ~D[2026-10-30]
+      assert Invoicing.change_payment(paid, today).changes == %{}
+
+      assert {:ok, paid} = Invoicing.mark_paid(paid, %{"paid_on" => "2026-11-04"}, today)
+      assert paid.paid_on == today
+
+      assert {:ok, unpaid} = Invoicing.mark_unpaid(paid)
+      assert unpaid.paid_on == nil
+      assert Repo.reload(unpaid).paid_on == nil
+    end
+
+    test "stay with a cancelled invoice, which can no longer change them", ctx do
+      invoice =
+        issued_fixture(ctx.template, ctx.entries, "2026-001", "2026-11-02", %{
+          "paid_on" => "2026-11-03"
+        })
+
+      assert {:ok, cancelled} = Invoicing.cancel_invoice(invoice)
+      assert cancelled.paid_on == ~D[2026-11-03]
+
+      assert {:error, :not_issued} =
+               Invoicing.mark_paid(cancelled, %{"paid_on" => "2026-11-04"}, ~D[2026-11-04])
+
+      assert {:error, :not_issued} = Invoicing.mark_unpaid(cancelled)
+
+      # A corrected invoice starts without payment.
+      params = Invoicing.new_invoice_params(~D[2026-11-04], cancelled)
+
+      assert {:ok, corrected} =
+               Invoicing.create_draft(Map.put(params, "entry_ids", ids(ctx.entries)))
+
+      assert corrected.paid_on == nil
+    end
+
+    test "cannot be stored for drafts", ctx do
+      draft = draft_fixture(ctx.template, ctx.entries)
+
+      assert_raise Postgrex.Error, ~r/invoices_paid_only_when_sent/, fn ->
+        Repo.update_all(from(i in Invoice, where: i.id == ^draft.id),
+          set: [paid_on: ~D[2026-11-03]]
+        )
+      end
+    end
+  end
+
+  describe "annual report" do
+    # 2025-007 (material) is dated 2025 and paid in 2026. 2026-001 bills the
+    # website, paid in 2026; 2026-002 the app and a licence, not paid yet;
+    # 2026-003 was paid and then cancelled. A draft never counts.
+    setup ctx do
+      [first, second, third] = ctx.entries
+
+      old =
+        issued_fixture(ctx.template, [], "2025-007", "2025-12-20", %{
+          "manual_items" => manual_items([{"Material", "2", "Stk.", "25"}]),
+          "paid_on" => "2026-01-05"
+        })
+
+      website =
+        issued_fixture(ctx.template, [first, second], "2026-001", "2026-03-02", %{
+          "paid_on" => "2026-03-10"
+        })
+
+      app =
+        issued_fixture(ctx.template, [third], "2026-002", "2026-04-01", %{
+          "manual_items" => manual_items([{"Lizenz", "1", "", "100"}])
+        })
+
+      {:ok, cancelled} =
+        ctx.template
+        |> issued_fixture([], "2026-003", "2026-05-01", %{
+          "manual_items" => manual_items([{"Beratung", "1", "", "500"}]),
+          "paid_on" => "2026-05-15"
+        })
+        |> Invoicing.cancel_invoice()
+
+      draft_fixture(ctx.template, [], %{
+        "manual_items" => manual_items([{"Entwurf", "1", "", "999"}])
+      })
+
+      %{old: old, website: website, app: app, cancelled: cancelled}
+    end
+
+    test "by payment date counts the invoices paid in the year", ctx do
+      report = Invoicing.annual_report(2026, "paid")
+
+      assert numbers(report.invoices) == ["2025-007", "2026-001"]
+      assert numbers(report.unpaid) == ["2026-002"]
+      assert numbers(report.cancelled) == ["2026-003"]
+      assert report.paid_later == []
+
+      assert report.totals.count == 2
+      assert Decimal.equal?(report.totals.hours, Decimal.new("5.50"))
+      assert Decimal.equal?(report.totals.time_amount, Decimal.new("440.00"))
+      assert Decimal.equal?(report.totals.other_amount, Decimal.new("50.00"))
+      assert Decimal.equal?(report.totals.gross, Decimal.new("490.00"))
+      refute report.vat?
+
+      [old, website] = report.invoices
+      assert old.paid_on == ~D[2026-01-05]
+      assert [%{kind: "Einzelposten", description: "Material", unit: "Stk."}] = old.items
+
+      assert [%{kind: "Zeit", description: "Website", project: "Website", unit: "Std."}] =
+               website.items
+
+      # In 2025 the material was invoiced, but its payment came in 2026.
+      report = Invoicing.annual_report(2025, "paid")
+      assert report.invoices == []
+      assert numbers(report.paid_later) == ["2025-007"]
+      assert report.unpaid == []
+      assert Decimal.equal?(report.totals.gross, 0)
+
+      assert Invoicing.annual_report(2025, "invoice").invoices |> numbers() == ["2025-007"]
+      assert ctx.old.paid_on == ~D[2026-01-05]
+    end
+
+    test "by invoice date counts the invoices dated in the year", ctx do
+      report = Invoicing.annual_report(2026, "invoice")
+
+      assert numbers(report.invoices) == ["2026-001", "2026-002"]
+      assert numbers(report.cancelled) == ["2026-003"]
+      assert report.unpaid == [] and report.paid_later == []
+      assert Decimal.equal?(report.totals.hours, Decimal.new("6.50"))
+      assert Decimal.equal?(report.totals.gross, Decimal.new("620.00"))
+
+      # A payment recorded later moves the invoice on the other basis only.
+      {:ok, _} = Invoicing.mark_paid(ctx.app, %{"paid_on" => "2026-11-04"}, ~D[2026-11-04])
+
+      assert numbers(Invoicing.annual_report(2026, "invoice").invoices) ==
+               numbers(report.invoices)
+
+      report = Invoicing.annual_report(2026, "paid")
+      assert numbers(report.invoices) == ["2025-007", "2026-001", "2026-002"]
+      assert report.unpaid == []
+    end
+
+    test "offers the years with invoices or payments, this year and the last" do
+      assert Invoicing.report_years(~D[2026-11-04]) == [2026, 2025]
+      assert Invoicing.report_years(~D[2028-01-02]) == [2028, 2027, 2026, 2025]
+      assert Invoicing.report_years(~D[2026-01-02], 2021) == [2026, 2025, 2021]
+    end
+  end
+
   describe "invoice numbers" do
     test "keep prefixes with umlauts and other non-ASCII characters" do
       assert Invoicing.next_number("KÜ-2026-007", 2026) == "KÜ-2026-008"
@@ -1077,4 +1246,6 @@ defmodule PotionZeitgeist.InvoicingTest do
   end
 
   defp ids(entries), do: Enum.map(entries, & &1.id)
+
+  defp numbers(rows), do: Enum.map(rows, & &1.number)
 end

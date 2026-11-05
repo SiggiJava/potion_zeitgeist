@@ -33,6 +33,13 @@ defmodule PotionZeitgeistWeb.Admin.InvoicesLive do
           </p>
         </div>
         <div class="flex gap-2 flex-wrap">
+          <.link
+            id="annual-report"
+            navigate={~p"/admin/invoices/annual"}
+            class="btn btn-ghost btn-sm gap-2"
+          >
+            <.icon name="hero-table-cells" class="size-4" /> Annual report
+          </.link>
           <.link navigate={~p"/admin/invoice-templates"} class="btn btn-ghost btn-sm gap-2">
             <.icon name="hero-document-duplicate" class="size-4" /> Letter templates
           </.link>
@@ -73,6 +80,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoicesLive do
                 <th>Period</th>
                 <th class="text-right">Amount</th>
                 <th>Status</th>
+                <th>Paid</th>
               </tr>
             </thead>
             <tbody>
@@ -93,7 +101,8 @@ defmodule PotionZeitgeistWeb.Admin.InvoicesLive do
                 <td class="text-right font-mono text-sm whitespace-nowrap">
                   {Format.money(invoice.gross_total)}
                 </td>
-                <td><.invoice_status status={invoice.status} /></td>
+                <td><.invoice_status status={invoice.status} paid_on={invoice.paid_on} /></td>
+                <td class="text-sm whitespace-nowrap">{Format.date(invoice.paid_on)}</td>
               </tr>
             </tbody>
           </table>

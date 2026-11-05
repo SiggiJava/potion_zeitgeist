@@ -12,6 +12,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
   def mount(%{"id" => id}, _session, socket) do
     {:ok,
      socket
+     |> assign(:today, Invoicing.today())
      |> assign_invoice(Invoicing.get_invoice!(id))
      |> assign(:issue_form, nil)
      |> assign(:issue_warnings, [])
@@ -24,7 +25,14 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
     |> assign(:invoice, invoice)
     |> assign(:letter, Invoicing.letter(invoice))
     |> assign(:page_title, title(invoice))
+    |> assign(:payment_form, payment_form(invoice, socket.assigns.today))
   end
+
+  # Issued invoices without a payment date show the form to record it.
+  defp payment_form(%{status: "issued", paid_on: nil} = invoice, today),
+    do: invoice |> Invoicing.change_payment(today) |> to_form(as: :payment)
+
+  defp payment_form(_invoice, _today), do: nil
 
   defp title(%{status: "draft"}), do: "Draft invoice"
   defp title(%{number: number}), do: "Invoice #{number}"
@@ -117,6 +125,56 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
     end
   end
 
+  @impl true
+  def handle_event("mark_paid", %{"payment" => params}, socket) do
+    case Invoicing.mark_paid(socket.assigns.invoice, params) do
+      {:ok, invoice} ->
+        {:noreply,
+         socket
+         |> assign_invoice(invoice)
+         |> put_flash(
+           :info,
+           "Invoice #{invoice.number} marked as paid on #{Format.date(invoice.paid_on)}."
+         )}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, assign(socket, :payment_form, to_form(changeset, as: :payment))}
+
+      {:error, _} ->
+        {:noreply, reload(socket, "Only issued invoices can be marked as paid.")}
+    end
+  end
+
+  @impl true
+  def handle_event("edit_payment", _params, socket) do
+    form =
+      socket.assigns.invoice
+      |> Invoicing.change_payment(socket.assigns.today)
+      |> to_form(as: :payment)
+
+    {:noreply, assign(socket, :payment_form, form)}
+  end
+
+  @impl true
+  def handle_event("cancel_payment_edit", _params, socket) do
+    {:noreply,
+     assign(socket, :payment_form, payment_form(socket.assigns.invoice, socket.assigns.today))}
+  end
+
+  @impl true
+  def handle_event("mark_unpaid", _params, socket) do
+    case Invoicing.mark_unpaid(socket.assigns.invoice) do
+      {:ok, invoice} ->
+        {:noreply,
+         socket
+         |> assign_invoice(invoice)
+         |> put_flash(:info, "The payment date of invoice #{invoice.number} was removed.")}
+
+      {:error, _} ->
+        {:noreply, reload(socket, "Only issued invoices can be marked as paid.")}
+    end
+  end
+
   defp assign_issue_form(socket, changeset) do
     date = Ecto.Changeset.get_field(changeset, :invoice_date)
 
@@ -164,12 +222,15 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
             ← Invoices
           </.link>
           <h1 class="text-2xl font-bold flex items-center gap-3">
-            {@page_title} <.invoice_status status={@invoice.status} />
+            {@page_title} <.invoice_status status={@invoice.status} paid_on={@invoice.paid_on} />
           </h1>
           <p class="text-sm text-base-content/60">
             {Format.month(@invoice.period_start)} · {Format.money(@invoice.gross_total)}
             <%= if @invoice.issued_at do %>
               · issued {Calendar.strftime(@invoice.issued_at, "%Y-%m-%d")}
+            <% end %>
+            <%= if @invoice.paid_on do %>
+              · paid {Calendar.strftime(@invoice.paid_on, "%Y-%m-%d")}
             <% end %>
           </p>
         </div>
@@ -262,11 +323,83 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
         Issued invoices can no longer be changed. Keep the PDF you send to the client for 8 years.
       </p>
 
+      <div
+        :if={@invoice.status == "issued"}
+        id="payment"
+        class="card bg-base-100 shadow print:hidden"
+      >
+        <div class="card-body p-4">
+          <%= if @payment_form do %>
+            <.form
+              for={@payment_form}
+              id="payment-form"
+              phx-submit="mark_paid"
+              novalidate
+              class="flex flex-wrap items-end gap-x-4 gap-y-2"
+            >
+              <div class="flex-1 min-w-60 mb-2">
+                <p class="font-medium">
+                  {if @invoice.paid_on, do: "Change the payment date", else: "Not paid yet"}
+                </p>
+                <p class="text-sm text-base-content/60">
+                  Record the day the payment came in. The annual report counts the invoice
+                  in the year of that day, as the EÜR does.
+                </p>
+              </div>
+              <div class="w-44">
+                <.input
+                  field={@payment_form[:paid_on]}
+                  type="date"
+                  label="Paid on"
+                  max={Date.to_iso8601(@today)}
+                />
+              </div>
+              <div class="flex gap-2 mb-2">
+                <button
+                  :if={@invoice.paid_on}
+                  type="button"
+                  phx-click="cancel_payment_edit"
+                  class="btn btn-ghost btn-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="mark-paid"
+                  type="submit"
+                  class="btn btn-primary btn-sm gap-2"
+                  phx-disable-with="Saving..."
+                >
+                  <.icon name="hero-check-circle" class="size-4" /> Mark as paid
+                </button>
+              </div>
+            </.form>
+          <% else %>
+            <div class="flex flex-wrap items-center gap-3">
+              <.icon name="hero-check-circle" class="size-5 text-success" />
+              <p id="paid-on" class="flex-1 min-w-60">
+                Paid on <span class="font-medium">{Format.date(@invoice.paid_on)}</span>.
+                The annual report counts it in {@invoice.paid_on.year}.
+              </p>
+              <button id="change-payment" phx-click="edit_payment" class="btn btn-ghost btn-sm gap-2">
+                <.icon name="hero-pencil" class="size-4" /> Change date
+              </button>
+              <button id="mark-unpaid" phx-click="mark_unpaid" class="btn btn-ghost btn-sm gap-2">
+                <.icon name="hero-arrow-uturn-left" class="size-4" /> Not paid
+              </button>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
       <div :if={@invoice.status == "cancelled"} role="alert" class="alert print:hidden">
         <.icon name="hero-information-circle" class="size-5" />
         <span>
           This invoice was cancelled on {Calendar.strftime(@invoice.cancelled_at, "%Y-%m-%d")}.
           It keeps its number. Its time entries can be billed on a new invoice.
+          <%= if @invoice.paid_on do %>
+            It was marked as paid on {Calendar.strftime(@invoice.paid_on, "%Y-%m-%d")}; as a
+            cancelled invoice it no longer counts in the annual report.
+          <% end %>
         </span>
       </div>
 
@@ -347,6 +480,15 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
                 The invoice stays in the list as cancelled and keeps its number, so your
                 numbering has no gaps. Its time entries can then be billed on a new invoice.
                 If the client already received it, tell them in writing that it is cancelled.
+              </p>
+              <p
+                :if={@invoice.paid_on}
+                id="cancel-paid-note"
+                class="text-sm text-base-content/70 mt-2"
+              >
+                It is marked as paid on {Format.date(@invoice.paid_on)}. Once cancelled it no
+                longer counts in the annual report, so record the payment on the corrected
+                invoice.
               </p>
               <div class="modal-action">
                 <button phx-click="dismiss" class="btn btn-ghost">Keep invoice</button>

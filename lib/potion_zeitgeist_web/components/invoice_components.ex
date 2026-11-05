@@ -395,18 +395,25 @@ defmodule PotionZeitgeistWeb.InvoiceComponents do
     """
   end
 
-  @doc "A badge for an invoice status."
+  @doc """
+  A badge for an invoice status. An issued invoice with a payment date
+  shows as paid.
+  """
   attr :status, :string, required: true
+  attr :paid_on, :any, default: nil, doc: "the payment date of the invoice"
 
   def invoice_status(assigns) do
+    assigns = assign(assigns, :paid?, assigns.status == "issued" and assigns.paid_on != nil)
+
     ~H"""
     <span class={[
       "badge badge-sm",
       @status == "draft" && "badge-warning",
-      @status == "issued" && "badge-success",
+      @status == "issued" && !@paid? && "badge-info",
+      @paid? && "badge-success",
       @status == "cancelled" && "badge-ghost"
     ]}>
-      {status_label(@status)}
+      {if @paid?, do: "Paid", else: status_label(@status)}
     </span>
     """
   end

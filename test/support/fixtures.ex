@@ -94,4 +94,37 @@ defmodule PotionZeitgeist.Fixtures do
     {:ok, invoice} = template |> draft_params(entries, attrs) |> Invoicing.create_draft()
     invoice
   end
+
+  @doc """
+  An invoice issued with `number` and `invoice_date`, billing `entries` and
+  the other items of `attrs` (see `draft_params/3`). With `paid_on`, its
+  payment came in on that day.
+  """
+  def issued_fixture(template, entries, number, invoice_date, attrs \\ %{}) do
+    {paid_on, attrs} = attrs |> Map.new() |> Map.pop("paid_on")
+
+    {:ok, invoice} =
+      template
+      |> draft_fixture(entries, attrs)
+      |> Invoicing.issue_invoice(%{"number" => number, "invoice_date" => invoice_date})
+
+    if paid_on do
+      {:ok, invoice} = Invoicing.mark_paid(invoice, %{"paid_on" => paid_on}, ~D[2026-11-04])
+      invoice
+    else
+      invoice
+    end
+  end
+
+  @doc "Form params of other items: `{description, quantity, unit, price}` tuples."
+  def manual_items(items) do
+    Enum.map(items, fn {description, quantity, unit, price} ->
+      %{
+        "description" => description,
+        "quantity" => quantity,
+        "unit" => unit,
+        "unit_price" => price
+      }
+    end)
+  end
 end
