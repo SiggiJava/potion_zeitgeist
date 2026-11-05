@@ -1,7 +1,7 @@
 defmodule PotionZeitgeist.TimeTracking do
   import Ecto.Query
 
-  alias PotionZeitgeist.{Invoicing, Projects, Repo}
+  alias PotionZeitgeist.{Invoicing, LocalTime, Projects, Repo}
   alias PotionZeitgeist.Invoicing.InvoiceEntry
   alias PotionZeitgeist.TimeTracking.{Export, FlatBooking, TimeEntry}
 
@@ -48,16 +48,19 @@ defmodule PotionZeitgeist.TimeTracking do
     )
   end
 
+  @doc """
+  Entries of a user clocked in on `date`, a day in the app's time zone (see
+  `PotionZeitgeist.LocalTime`).
+  """
   def list_entries_for_date(user_id, date) do
-    start_of_day = NaiveDateTime.new!(date, ~T[00:00:00])
-    end_of_day = NaiveDateTime.new!(date, ~T[23:59:59])
+    {start_of_day, next_day} = LocalTime.day_range(date)
 
     Repo.all(
       from e in TimeEntry,
         where:
           e.user_id == ^user_id and
             e.clock_in >= ^start_of_day and
-            e.clock_in <= ^end_of_day,
+            e.clock_in < ^next_day,
         order_by: [asc: e.clock_in]
     )
   end
@@ -164,6 +167,48 @@ defmodule PotionZeitgeist.TimeTracking do
       end
     end)
   end
+
+  @doc """
+  Updates an entry from its edit form. `"clock_in"` and `"clock_out"` are
+  wall-clock times in the app's time zone as `datetime-local` inputs send
+  them (see `PotionZeitgeist.LocalTime.parse_input/3`); an empty clock-out
+  leaves the entry running. Returns what `update_entry/2` returns, or
+  `{:error, changeset}` for a time that cannot be read or does not exist.
+  """
+  def update_entry_from_form(%TimeEntry{} = entry, params) do
+    clock_in = LocalTime.parse_input(params["clock_in"], entry.clock_in)
+
+    not_before =
+      case clock_in do
+        {:ok, %NaiveDateTime{} = time} -> time
+        _ -> entry.clock_in
+      end
+
+    clock_out =
+      LocalTime.parse_input(params["clock_out"], entry.clock_out, not_before: not_before)
+
+    case {clock_in, clock_out} do
+      {{:ok, clock_in}, {:ok, clock_out}} ->
+        update_entry(
+          entry,
+          Map.merge(params, %{"clock_in" => clock_in, "clock_out" => clock_out})
+        )
+
+      _ ->
+        changeset =
+          entry
+          |> change_entry(Map.drop(params, ["clock_in", "clock_out"]))
+          |> add_time_error(:clock_in, clock_in)
+          |> add_time_error(:clock_out, clock_out)
+
+        {:error, %{changeset | action: :update}}
+    end
+  end
+
+  defp add_time_error(changeset, field, {:error, message}),
+    do: Ecto.Changeset.add_error(changeset, field, message)
+
+  defp add_time_error(changeset, _field, _result), do: changeset
 
   @doc """
   Updates an entry. Entries on a draft or issued invoice cannot be changed and
@@ -309,9 +354,12 @@ defmodule PotionZeitgeist.TimeTracking do
     end)
   end
 
+  @doc """
+  Seconds worked today (in the app's time zone) by the user, including the
+  running entry so far.
+  """
   def today_total_seconds(user_id) do
-    today = Date.utc_today()
-    entries = list_entries_for_date(user_id, today)
+    entries = list_entries_for_date(user_id, LocalTime.today())
     now = NaiveDateTime.utc_now()
 
     Enum.reduce(entries, 0, fn entry, acc ->

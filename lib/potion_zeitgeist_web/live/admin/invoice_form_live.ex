@@ -16,7 +16,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   """
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.Invoicing
+  alias PotionZeitgeist.{Invoicing, LocalTime}
   alias PotionZeitgeist.Invoicing.{Calculation, Format, Invoice, ManualItem}
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
@@ -704,7 +704,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                           </td>
                           <td class="w-24 whitespace-nowrap">
                             <label for={"entry-#{entry.id}"}>
-                              {entry.clock_in |> NaiveDateTime.to_date() |> Date.to_string()}
+                              {entry.clock_in |> LocalTime.to_date() |> Date.to_string()}
                             </label>
                           </td>
                           <td :if={@show_users} class="hidden @md:table-cell w-32 truncate text-sm">

@@ -60,6 +60,14 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Time zone data (IANA, bundled with the tz package), so times can be shown
+# in local time with summer and winter time.
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
+# The time zone people see and type times in, and in which days and months
+# begin (daily totals, invoices). Set with TIME_ZONE, see config/runtime.exs.
+config :potion_zeitgeist, :time_zone, "Europe/Berlin"
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

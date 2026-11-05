@@ -197,11 +197,7 @@ defmodule PotionZeitgeist.Invoicing.AnnualReportTest do
     report = AnnualReport.build(2026, "invoice", %{counted: [plain], cancelled: [cancelled]})
     refute report.vat?
     refute report.small_business?
-    assert hd(report.cancelled).cancelled_on == ~D[2026-03-31]
-
-    # The day in Germany, as the database gives it for the report.
-    loaded = %{cancelled | cancelled_on: ~D[2026-04-01]}
-    report = AnnualReport.build(2026, "invoice", %{counted: [plain], cancelled: [loaded]})
+    # The day in the app's time zone: 00:30 summer time in Berlin.
     assert hd(report.cancelled).cancelled_on == ~D[2026-04-01]
 
     assert AnnualReport.build(2026, "invoice", %{counted: [plain]}).small_business?

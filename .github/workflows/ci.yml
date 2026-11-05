@@ -56,6 +56,9 @@ jobs:
       - run: mix compile --warnings-as-errors
       - run: mix format --check-formatted || (mix format && git diff && exit 1)
       - run: mix test
+      # mix.lock must list every dependency in mix.exs; otherwise the first
+      # mix deps.get of every installation changes it. Prints what is missing.
+      - run: git diff --exit-code mix.lock
 
   # Builds the Docker image natively for each platform and runs the end-to-end
   # test of the Docker package on it. On main and on version tags the tested

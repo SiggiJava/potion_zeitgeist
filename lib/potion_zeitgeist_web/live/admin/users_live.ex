@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.Admin.UsersLive do
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.Accounts
+  alias PotionZeitgeist.{Accounts, LocalTime}
   alias PotionZeitgeist.Accounts.User
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
@@ -168,7 +168,7 @@ defmodule PotionZeitgeistWeb.Admin.UsersLive do
                   </span>
                 </td>
                 <td class="text-sm text-base-content/60">
-                  {Calendar.strftime(user.inserted_at, "%Y-%m-%d")}
+                  {LocalTime.strftime(user.inserted_at, "%Y-%m-%d")}
                 </td>
                 <td class="text-right">
                   <div class="flex gap-1 justify-end flex-wrap">

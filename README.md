@@ -7,6 +7,7 @@ A time clocking application for small and medium-sized businesses. Built with El
 ## Features
 
 - Clock in / clock out with a real-time live timer
+- Times shown and entered in local time (Europe/Berlin by default), with summer and winter time
 - Personal time entry history — view, edit, delete, and export
 - CSV export for any user's entries
 - Role-based access: `admin` and `user`
@@ -88,6 +89,17 @@ When the stylesheet a page is loaded with lacks icons that the pages use, the ap
 
 On first launch, visiting any page will redirect you to **`/setup`**, where you create the initial administrator account. This page is only shown once — it becomes inaccessible as soon as an admin exists.
 
+### Time zone
+
+Clock-in and clock-out times are stored in UTC. The app shows them, and reads times typed into the edit forms, in one time zone for everyone, with summer and winter time: `Europe/Berlin` unless the environment variable `TIME_ZONE` names another one (an IANA name such as `Europe/Vienna` or `Europe/Zurich`). Days and months begin at midnight in that zone, for the dashboard's total of today, the daily totals in the CSV export and the month of an invoice. Durations are the real time worked, so a night shift across the change to winter time counts the extra hour.
+
+- `mix phx.server`: `TIME_ZONE=Europe/Vienna mix phx.server` (only needed for a zone other than Europe/Berlin).
+- Docker: `TIME_ZONE=Europe/Vienna` in `.env`, then `docker compose up -d`.
+
+Changing the zone later only changes how the stored times are shown. The app does not start with a name it does not know, and says so in its log.
+
+When summer time ends, the hour from 2:00 to 3:00 happens twice. In the edit form a time in that hour is taken as the first of the two (still summer time) unless that would lie before the clock-in; a time the form already showed is kept as it was. A time in the hour that is skipped when summer time begins (2:00 to 3:00 in Germany) is refused.
+
 ---
 
 ## Development
@@ -117,6 +129,7 @@ mix ecto.reset
 | `VAULT_KEY` | 32-byte AES encryption key encoded as Base64 (see below) |
 | `PHX_HOST` | Host names people use to open the app, comma-separated, e.g. `example.com` (default `localhost`) |
 | `FORCE_SSL` | Redirects HTTP to HTTPS and sends HSTS (default `true`; the reverse proxy must set `X-Forwarded-Proto`). `false` serves plain HTTP. The Docker image defaults to `false`. |
+| `TIME_ZONE` | Optional. Time zone of the times shown and typed in the app, see [Time zone](#time-zone) (default `Europe/Berlin`) |
 
 ### Generate a vault key
 
@@ -183,6 +196,7 @@ Settings go into a file named `.env` next to `docker-compose.yml` (all optional,
 | `PHX_HOST` | `localhost` | Host names or IP addresses used to open the app, separated by commas, e.g. `zeit.example.com,192.168.1.20`. The live pages (clocking in, dialogs, buttons) only work from these hosts and from localhost. |
 | `APP_PORT` | `4000` | Port on the computer running Docker. |
 | `FORCE_SSL` | `false` | `true` when the app is served over HTTPS by a reverse proxy: plain HTTP is then redirected to HTTPS and browsers are told to stay on HTTPS (HSTS). |
+| `TIME_ZONE` | `Europe/Berlin` | Time zone of the times shown and typed in the app, see [Time zone](#time-zone). |
 | `APP_VERSION` | `latest` | Image version: `latest`, a release such as `1.2.0`, or `sha-<commit>`. |
 | `SECRET_KEY_BASE`, `VAULT_KEY` | generated | Set them only if you want to manage the keys yourself. Never change `VAULT_KEY` of an existing installation. |
 | `POSTGRES_PASSWORD` | `postgres` | Database password. Only used when the database volume is created for the first time; letters and digits only. The database port is not published on the computer. |

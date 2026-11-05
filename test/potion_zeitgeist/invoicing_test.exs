@@ -37,6 +37,27 @@ defmodule PotionZeitgeist.InvoicingTest do
       assert ids(Invoicing.billable_entries(~D[2026-10-01], draft)) == ids(ctx.entries)
     end
 
+    test "months begin at midnight in the app's time zone", ctx do
+      # 00:30 on 1 October in Berlin (summer time, UTC+2) and 00:30 on
+      # 1 November (winter time, UTC+1): in UTC both are still the month before.
+      october = entry_fixture(ctx.user, "2026-09-30 22:30:00", "2026-09-30 23:30:00")
+      november = entry_fixture(ctx.user, "2026-10-31 23:30:00", "2026-11-01 00:30:00")
+      entry_fixture(ctx.user, "2026-10-31 23:45:00", nil)
+
+      assert ids(Invoicing.billable_entries(~D[2026-10-01])) == ids([october | ctx.entries])
+      assert ids(Invoicing.billable_entries(~D[2026-11-01])) == [november.id]
+      assert Invoicing.billable_entries(~D[2026-09-01]) == []
+      assert Invoicing.running_entry_count(~D[2026-10-01]) == 0
+      assert Invoicing.running_entry_count(~D[2026-11-01]) == 1
+
+      assert [{~D[2026-11-01], 60}, {~D[2026-10-01], 450}] =
+               Invoicing.month_choices(~D[2026-11-05])
+
+      # The time sheet shows the day in Berlin.
+      draft = draft_fixture(ctx.template, [october])
+      assert [%{date: ~D[2026-10-01], minutes: 60}] = Invoicing.list_invoice_entries(draft)
+    end
+
     test "month choices list months with unbilled time", ctx do
       entry_fixture(ctx.user, "2026-07-10 08:00:00", "2026-07-10 08:30:00")
 

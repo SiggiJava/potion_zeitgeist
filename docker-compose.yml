@@ -50,6 +50,7 @@ services:
       VAULT_KEY: ${VAULT_KEY:-}
       PHX_HOST: ${PHX_HOST:-localhost}
       FORCE_SSL: ${FORCE_SSL:-false}
+      TIME_ZONE: ${TIME_ZONE:-Europe/Berlin}
     volumes:
       - app_data:/app/data
     depends_on:

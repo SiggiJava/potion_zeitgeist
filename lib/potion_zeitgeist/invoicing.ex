@@ -16,7 +16,7 @@ defmodule PotionZeitgeist.Invoicing do
 
   import Ecto.Query
 
-  alias PotionZeitgeist.Repo
+  alias PotionZeitgeist.{LocalTime, Repo}
   alias PotionZeitgeist.Invoicing.{AnnualReport, Calculation, Invoice, InvoiceEntry, InvoiceItem}
   alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout, ManualItem}
   alias PotionZeitgeist.TimeTracking.{FlatBooking, TimeEntry}
@@ -144,13 +144,10 @@ defmodule PotionZeitgeist.Invoicing do
   end
 
   @doc """
-  Today's date in Germany, where invoices are written. Taken from the
-  database, so the app needs no time zone data.
+  Today's date in the app's time zone (Europe/Berlin unless `TIME_ZONE`
+  says otherwise), see `PotionZeitgeist.LocalTime`.
   """
-  def today do
-    %{rows: [[date]]} = Repo.query!("SELECT (now() AT TIME ZONE 'Europe/Berlin')::date")
-    date
-  end
+  def today, do: LocalTime.today()
 
   ## Billable time
 
@@ -159,20 +156,28 @@ defmodule PotionZeitgeist.Invoicing do
     {Date.beginning_of_month(date), Date.end_of_month(date)}
   end
 
+  # The UTC times (naive, as stored) between which the month of `date` lies
+  # in the app's time zone: from its first midnight to the next month's.
+  defp month_bounds(%Date{} = date) do
+    {first, last} = month_range(date)
+    LocalTime.day_range(first, last)
+  end
+
   @doc """
   Completed time entries of all users with a clock-in in the month of `month`
   that are not on another draft or issued invoice. Entries already on
   `invoice` (when editing a draft) are included. Days count by clock-in date
-  (UTC), as in the CSV export.
+  in the app's time zone (see `PotionZeitgeist.LocalTime`), as in the CSV
+  export.
   """
   def billable_entries(%Date{} = month, invoice \\ nil, opts \\ []) do
-    {first, last} = month_range(month)
+    {month_start, month_end} = month_bounds(month)
 
     from(e in TimeEntry,
       as: :entry,
       where: not is_nil(e.clock_out),
-      where: e.clock_in >= ^NaiveDateTime.new!(first, ~T[00:00:00]),
-      where: e.clock_in < ^NaiveDateTime.new!(Date.add(last, 1), ~T[00:00:00]),
+      where: e.clock_in >= ^month_start,
+      where: e.clock_in < ^month_end,
       order_by: [asc: e.clock_in, asc: e.id],
       preload: [:user, :project]
     )
@@ -227,13 +232,13 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc "Number of entries in the month of `month` that are still running."
   def running_entry_count(%Date{} = month) do
-    {first, last} = month_range(month)
+    {month_start, month_end} = month_bounds(month)
 
     Repo.aggregate(
       from(e in TimeEntry,
         where: is_nil(e.clock_out),
-        where: e.clock_in >= ^NaiveDateTime.new!(first, ~T[00:00:00]),
-        where: e.clock_in < ^NaiveDateTime.new!(Date.add(last, 1), ~T[00:00:00])
+        where: e.clock_in >= ^month_start,
+        where: e.clock_in < ^month_end
       ),
       :count
     )
@@ -246,16 +251,27 @@ defmodule PotionZeitgeist.Invoicing do
   edited and the `shown` month.
   """
   def month_choices(today, invoice \\ nil, shown \\ nil) do
-    unbilled_entries =
+    # The month of the clock-in in the app's time zone, as billable_entries/3
+    # counts it. Grouped outside, since Postgres does not see two copies of
+    # the time zone parameter as the same expression.
+    entry_months =
       from(e in TimeEntry,
         as: :entry,
         where: not is_nil(e.clock_out),
-        group_by: fragment("date_trunc('month', ?)", e.clock_in),
-        select:
-          {fragment("date_trunc('month', ?)::date", e.clock_in),
-           sum(fragment("EXTRACT(EPOCH FROM (? - ?))", e.clock_out, e.clock_in))}
+        select: %{
+          month:
+            fragment(
+              "date_trunc('month', (? AT TIME ZONE 'UTC') AT TIME ZONE ?)::date",
+              e.clock_in,
+              ^LocalTime.zone()
+            ),
+          seconds: fragment("EXTRACT(EPOCH FROM (? - ?))", e.clock_out, e.clock_in)
+        }
       )
       |> exclude_invoiced(invoice)
+
+    unbilled_entries =
+      from(m in subquery(entry_months), group_by: m.month, select: {m.month, sum(m.seconds)})
       |> Repo.all()
       |> Map.new(fn {month, seconds} ->
         {month, seconds |> Decimal.new() |> Decimal.round(0) |> Decimal.to_integer() |> div(60)}
@@ -813,7 +829,7 @@ defmodule PotionZeitgeist.Invoicing do
         %InvoiceEntry{
           invoice_id: invoice.id,
           time_entry_id: entry.id,
-          date: NaiveDateTime.to_date(entry.clock_in),
+          date: LocalTime.to_date(entry.clock_in),
           minutes: Calculation.entry_minutes(entry),
           description: Map.fetch!(descriptions, entry.project_id),
           user_name: entry.user && entry.user.name,
@@ -1144,12 +1160,7 @@ defmodule PotionZeitgeist.Invoicing do
       queries
       |> Map.put(
         :cancelled,
-        dated_in_year
-        |> where([i], i.status == "cancelled")
-        |> select_merge([i], %{
-          cancelled_on:
-            fragment("(? AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Berlin')::date", i.cancelled_at)
-        })
+        where(dated_in_year, [i], i.status == "cancelled")
       )
       |> Map.new(fn {key, query} ->
         {key, Repo.all(from i in query, preload: [items: :project])}

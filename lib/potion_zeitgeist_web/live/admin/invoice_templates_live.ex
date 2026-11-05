@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.Admin.InvoiceTemplatesLive do
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.Invoicing
+  alias PotionZeitgeist.{Invoicing, LocalTime}
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
 
@@ -93,7 +93,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceTemplatesLive do
                 <td class="font-medium">{template.name}</td>
                 <td class="text-sm text-base-content/70 max-w-xs truncate">{template.subject}</td>
                 <td class="text-sm text-base-content/70">
-                  {Calendar.strftime(template.updated_at, "%Y-%m-%d")}
+                  {LocalTime.strftime(template.updated_at, "%Y-%m-%d")}
                 </td>
                 <td class="text-right">
                   <div class="flex gap-1 justify-end flex-wrap">

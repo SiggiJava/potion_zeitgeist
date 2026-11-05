@@ -18,6 +18,7 @@ defmodule PotionZeitgeist.Invoicing.AnnualReport do
   """
 
   alias PotionZeitgeist.Invoicing.{Format, InvoiceItem}
+  alias PotionZeitgeist.LocalTime
 
   @bases ~w(paid invoice)
 
@@ -174,10 +175,8 @@ defmodule PotionZeitgeist.Invoicing.AnnualReport do
     |> Enum.find("", &(&1 != ""))
   end
 
-  # The day of cancelling in Germany, which Invoicing.annual_report/2 reads
-  # from the database; the UTC date when it is not loaded.
-  defp cancelled_on(%{cancelled_on: %Date{} = date}), do: date
-  defp cancelled_on(%{cancelled_at: %DateTime{} = at}), do: DateTime.to_date(at)
+  # The day of cancelling in the app's time zone.
+  defp cancelled_on(%{cancelled_at: %DateTime{} = at}), do: LocalTime.to_date(at)
   defp cancelled_on(_invoice), do: nil
 
   defp project_name(%{project: %{name: name}}), do: name

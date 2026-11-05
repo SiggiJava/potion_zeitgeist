@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.DashboardLive do
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.{Projects, Repo, TimeTracking}
+  alias PotionZeitgeist.{LocalTime, Projects, Repo, TimeTracking}
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_authenticated}
 
@@ -249,7 +249,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold">Dashboard</h1>
         <div class="text-sm text-base-content/60">
-          {Calendar.strftime(@now, "%A, %B %d, %Y")}
+          {LocalTime.strftime(@now, "%A, %B %d, %Y")}
         </div>
       </div>
 
@@ -265,7 +265,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
 
           <%= if @active_entry do %>
             <p class="text-base-content/60 text-sm">
-              Since {Calendar.strftime(@active_entry.clock_in, "%H:%M:%S")}
+              Since {LocalTime.strftime(@active_entry.clock_in, "%H:%M:%S")}
             </p>
             <div class="text-4xl font-mono font-bold text-success my-4">
               {TimeTracking.format_duration(current_session_seconds(@active_entry, @now))}
@@ -330,7 +330,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
               <div class="stat-value text-primary font-mono">
                 {TimeTracking.format_duration(@today_seconds)}
               </div>
-              <div class="stat-desc">{Date.utc_today() |> Date.to_string()}</div>
+              <div class="stat-desc">{@now |> LocalTime.to_date() |> Date.to_string()}</div>
             </div>
             <div class="stat">
               <div class="stat-title">Status</div>
@@ -355,7 +355,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
             <p class="text-sm text-base-content/70 mt-2">
               You have been working on
               <span class="font-semibold text-base-content">{project_label(@active_entry)}</span>
-              since {Calendar.strftime(@active_entry.clock_in, "%H:%M")}. How should
+              since {LocalTime.strftime(@active_entry.clock_in, "%H:%M")}. How should
               <span class="font-semibold text-base-content">{@project_change.name}</span>
               apply?
             </p>
@@ -370,7 +370,7 @@ defmodule PotionZeitgeistWeb.DashboardLive do
                 <span>
                   <span class="block font-semibold">Rebook</span>
                   <span class="block text-xs font-normal opacity-70">
-                    Book the whole session since {Calendar.strftime(@active_entry.clock_in, "%H:%M")} to {@project_change.name}.
+                    Book the whole session since {LocalTime.strftime(@active_entry.clock_in, "%H:%M")} to {@project_change.name}.
                   </span>
                 </span>
               </button>

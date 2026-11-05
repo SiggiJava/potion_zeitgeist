@@ -7,6 +7,9 @@ defmodule PotionZeitgeist.Application do
 
   @impl true
   def start(_type, _args) do
+    # A mistyped TIME_ZONE stops the app here instead of showing wrong times.
+    PotionZeitgeist.LocalTime.validate!()
+
     children = [
       PotionZeitgeistWeb.Telemetry,
       PotionZeitgeist.Repo,

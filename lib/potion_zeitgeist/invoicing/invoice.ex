@@ -36,8 +36,6 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
     field :cancelled_at, :utc_datetime
     # The day the payment came in, see payment_changeset/3.
     field :paid_on, :date
-    # The day of cancelled_at in Germany, loaded only for the annual report.
-    field :cancelled_on, :date, virtual: true
 
     belongs_to :template, PotionZeitgeist.Invoicing.InvoiceTemplate
     has_many :items, PotionZeitgeist.Invoicing.InvoiceItem, preload_order: [asc: :position]
@@ -124,7 +122,8 @@ defmodule PotionZeitgeist.Invoicing.Invoice do
 
   @doc """
   Records the day the payment of an issued invoice came in, from
-  `attrs["paid_on"]`. The day may not lie after `today` (in Germany).
+  `attrs["paid_on"]`. The day may not lie after `today` (in the app's time
+  zone).
   It may lie before the invoice date, for a payment in advance.
   """
   def payment_changeset(invoice, attrs, today) do

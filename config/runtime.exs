@@ -23,6 +23,18 @@ end
 config :potion_zeitgeist, PotionZeitgeistWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# TIME_ZONE: the time zone people see and type times in, with summer and
+# winter time, and in which days and months begin (daily totals, invoices).
+# An IANA name such as Europe/Berlin (the default, see config/config.exs) or
+# Europe/Vienna. Times are stored in UTC, so changing it later only changes
+# how they are shown. The app does not start with an unknown name. Tests
+# always run in Europe/Berlin.
+time_zone = String.trim(System.get_env("TIME_ZONE") || "")
+
+if config_env() != :test and time_zone != "" do
+  config :potion_zeitgeist, :time_zone, time_zone
+end
+
 if config_env() == :prod do
   # Keys come from the environment. The Docker image also writes keys that
   # were not set to $DATA_DIR/secrets.env on first start (docker-entrypoint.sh)

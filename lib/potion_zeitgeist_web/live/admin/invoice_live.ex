@@ -3,7 +3,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
 
   import PotionZeitgeistWeb.InvoiceComponents
 
-  alias PotionZeitgeist.Invoicing
+  alias PotionZeitgeist.{Invoicing, LocalTime}
   alias PotionZeitgeist.Invoicing.Format
 
   on_mount {PotionZeitgeistWeb.UserAuth, :ensure_admin}
@@ -227,7 +227,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
           <p class="text-sm text-base-content/60">
             {Format.month(@invoice.period_start)} · {Format.money(@invoice.gross_total)}
             <%= if @invoice.issued_at do %>
-              · issued {Calendar.strftime(@invoice.issued_at, "%Y-%m-%d")}
+              · issued {LocalTime.strftime(@invoice.issued_at, "%Y-%m-%d")}
             <% end %>
             <%= if @invoice.paid_on do %>
               · paid {Calendar.strftime(@invoice.paid_on, "%Y-%m-%d")}
@@ -394,7 +394,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceLive do
       <div :if={@invoice.status == "cancelled"} role="alert" class="alert print:hidden">
         <.icon name="hero-information-circle" class="size-5" />
         <span>
-          This invoice was cancelled on {Calendar.strftime(@invoice.cancelled_at, "%Y-%m-%d")}.
+          This invoice was cancelled on {LocalTime.strftime(@invoice.cancelled_at, "%Y-%m-%d")}.
           It keeps its number. Its time entries can be billed on a new invoice.
           <%= if @invoice.paid_on do %>
             It was marked as paid on {Calendar.strftime(@invoice.paid_on, "%Y-%m-%d")}; as a
