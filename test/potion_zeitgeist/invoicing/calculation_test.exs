@@ -42,6 +42,36 @@ defmodule PotionZeitgeist.Invoicing.CalculationTest do
            ] = groups
   end
 
+  test "flat hours count with the entries of their project" do
+    flat = fn id, project, minutes ->
+      %{id: id, project_id: project && project.id, project: project, minutes: minutes}
+    end
+
+    groups =
+      Calculation.group_entries(
+        [entry(@web, "2026-10-01 08:00:00", "2026-10-01 09:00:00")],
+        [flat.(8, @web, 7200), flat.(3, @web, 30), flat.(5, @app, 600), flat.(9, nil, 45)]
+      )
+
+    assert [
+             %{key: "2", project_name: "App", minutes: 600, entries: [], bookings: [%{id: 5}]},
+             %{
+               key: "1",
+               project_name: "Website",
+               minutes: 7290,
+               entries: [_],
+               bookings: [%{id: 3}, %{id: 8}]
+             },
+             %{key: "none", project_name: nil, minutes: 45, bookings: [%{id: 9}]}
+           ] = groups
+
+    [_app, website, _none] =
+      Calculation.build_items(groups, fn _ -> Decimal.new("80") end, fn _ -> nil end)
+
+    assert Decimal.equal?(website.hours, Decimal.new("121.50"))
+    assert Decimal.equal?(website.amount, Decimal.new("9720.00"))
+  end
+
   test "amounts come from hours rounded to two decimals" do
     groups =
       Calculation.group_entries([

@@ -1,9 +1,9 @@
 defmodule PotionZeitgeist.Fixtures do
   @moduledoc """
-  Test helpers for creating users, projects and time entries.
+  Test helpers for creating users, projects, time entries and flat hours.
   """
 
-  alias PotionZeitgeist.{Accounts, Invoicing, Projects, Repo}
+  alias PotionZeitgeist.{Accounts, Invoicing, Projects, Repo, TimeTracking}
   alias PotionZeitgeist.TimeTracking.TimeEntry
 
   def user_fixture(attrs \\ %{}) do
@@ -42,6 +42,19 @@ defmodule PotionZeitgeist.Fixtures do
     })
   end
 
+  @doc "Flat hours of `user` for the month of `month` (a date in it)."
+  def flat_booking_fixture(user, month, hours, project \\ nil, notes \\ nil) do
+    {:ok, booking} =
+      TimeTracking.create_flat_booking(user.id, %{
+        "month" => Date.to_iso8601(Date.from_iso8601!(month)),
+        "hours" => hours,
+        "project_id" => project && to_string(project.id),
+        "notes" => notes
+      })
+
+    booking
+  end
+
   def template_fixture(attrs \\ %{}) do
     {:ok, template} =
       attrs
@@ -58,7 +71,10 @@ defmodule PotionZeitgeist.Fixtures do
     template
   end
 
-  @doc "Params for `Invoicing.create_draft/1` billing `entries` at one rate."
+  @doc """
+  Params for `Invoicing.create_draft/1` billing `entries` at one rate. Flat
+  hours go in `attrs` as `"booking_ids"`.
+  """
   def draft_params(template, entries, attrs \\ %{}) do
     Enum.into(attrs, %{
       "month" => "2026-10",

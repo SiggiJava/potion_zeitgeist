@@ -5,6 +5,7 @@ defmodule PotionZeitgeist.Invoicing.Format do
   """
 
   @months ~w(Januar Februar März April Mai Juni Juli August September Oktober November Dezember)
+  @short_months ~w(Jan. Feb. März Apr. Mai Juni Juli Aug. Sept. Okt. Nov. Dez.)
 
   @doc "`~D[2026-10-21]` becomes \"21.10.2026\"."
   def date(nil), do: ""
@@ -12,6 +13,12 @@ defmodule PotionZeitgeist.Invoicing.Format do
 
   @doc "`~D[2026-10-01]` becomes \"Oktober 2026\"."
   def month(%Date{} = date), do: "#{Enum.at(@months, date.month - 1)} #{date.year}"
+
+  @doc """
+  `~D[2026-10-01]` becomes \"Okt. 2026\", short enough for the date column
+  of the time sheet.
+  """
+  def short_month(%Date{} = date), do: "#{Enum.at(@short_months, date.month - 1)} #{date.year}"
 
   @doc "\"01.10.2026 – 31.10.2026\", or a single date when both are equal."
   def period(%Date{} = first, %Date{} = last) do

@@ -576,26 +576,32 @@ defmodule PotionZeitgeist.Invoicing.Letter do
   end
 
   # One row per day, item and person; several clock-ins of a day are added up.
+  # Flat hours print as rows of their own, with their month as the date,
+  # before the days of that month.
   defp timesheet(%Invoice{show_timesheet: false}, _entries, _vars), do: nil
   defp timesheet(_invoice, [], _vars), do: nil
 
   defp timesheet(_invoice, entries, vars) do
     rows =
       entries
-      |> Enum.group_by(&{&1.date, &1.description, &1.user_name})
-      |> Enum.map(fn {{date, description, user_name}, day_entries} ->
+      |> Enum.group_by(&{&1.date, &1.flat, &1.description, &1.user_name})
+      |> Enum.map(fn {{date, flat, description, user_name}, day_entries} ->
+        notes =
+          day_entries
+          |> Enum.map(&String.trim(&1.notes || ""))
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.uniq()
+          |> Enum.join("; ")
+
         %{
-          sort: {Date.to_gregorian_days(date), description, to_string(user_name)},
-          date: Format.date(date),
+          sort:
+            {Date.to_gregorian_days(date), if(flat, do: 0, else: 1), description,
+             to_string(user_name)},
+          date: if(flat, do: Format.short_month(date), else: Format.date(date)),
           project: description,
           user: user_name || "",
           minutes: day_entries |> Enum.map(& &1.minutes) |> Enum.sum(),
-          notes:
-            day_entries
-            |> Enum.map(&String.trim(&1.notes || ""))
-            |> Enum.reject(&(&1 == ""))
-            |> Enum.uniq()
-            |> Enum.join("; ")
+          notes: if(flat, do: flat_notes(notes), else: notes)
         }
       end)
       |> Enum.sort_by(& &1.sort)
@@ -610,4 +616,8 @@ defmodule PotionZeitgeist.Invoicing.Letter do
       total: rows |> Enum.map(& &1.minutes) |> Enum.sum() |> Format.duration()
     }
   end
+
+  # Flat hours were booked for the month as a whole, not clocked.
+  defp flat_notes(""), do: "Pauschal gebucht"
+  defp flat_notes(notes), do: "Pauschal gebucht: " <> notes
 end

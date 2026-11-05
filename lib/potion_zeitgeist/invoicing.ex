@@ -2,15 +2,16 @@ defmodule PotionZeitgeist.Invoicing do
   @moduledoc """
   Invoices for booked project time, and the letter templates they are printed with.
 
-  An invoice bills the time entries of a month, one item per project, and
-  can have other items entered on the form, such as material or flat fees
-  (see `PotionZeitgeist.Invoicing.ManualItem`), or only those.
+  An invoice bills the time entries and flat hours (see
+  `PotionZeitgeist.TimeTracking.FlatBooking`) of a month, one item per
+  project, and can have other items entered on the form, such as material
+  or flat fees (see `PotionZeitgeist.Invoicing.ManualItem`), or only those.
 
   An invoice starts as a draft that can be edited and deleted. Issuing it
   assigns the invoice number and freezes the letter texts. An issued invoice
   can only be cancelled, which keeps it and its number but frees its time
-  entries for a new invoice. Time entries on a draft or issued invoice can
-  neither be billed again nor be changed.
+  entries and flat hours for a new invoice. Time entries and flat hours on a
+  draft or issued invoice can neither be billed again nor be changed.
   """
 
   import Ecto.Query
@@ -18,7 +19,7 @@ defmodule PotionZeitgeist.Invoicing do
   alias PotionZeitgeist.Repo
   alias PotionZeitgeist.Invoicing.{Calculation, Invoice, InvoiceEntry, InvoiceItem}
   alias PotionZeitgeist.Invoicing.{InvoiceTemplate, Letter, LetterLayout, ManualItem}
-  alias PotionZeitgeist.TimeTracking.TimeEntry
+  alias PotionZeitgeist.TimeTracking.{FlatBooking, TimeEntry}
 
   @payment_days 14
   @default_vat_rate "19"
@@ -186,13 +187,39 @@ defmodule PotionZeitgeist.Invoicing do
         where: ie.active and ie.time_entry_id == parent_as(:entry).id,
         select: 1
 
-    on_invoice =
-      case invoice do
-        %Invoice{id: id} when not is_nil(id) -> where(on_invoice, [ie], ie.invoice_id != ^id)
-        _ -> on_invoice
-      end
+    where(query, not exists(on_other_invoices(on_invoice, invoice)))
+  end
 
-    where(query, not exists(on_invoice))
+  defp exclude_invoiced_bookings(query, invoice) do
+    on_invoice =
+      from ie in InvoiceEntry,
+        where: ie.active and ie.flat_booking_id == parent_as(:booking).id,
+        select: 1
+
+    where(query, not exists(on_other_invoices(on_invoice, invoice)))
+  end
+
+  # Rows of `invoice` itself (the draft being edited) do not count.
+  defp on_other_invoices(on_invoice, %Invoice{id: id}) when not is_nil(id),
+    do: where(on_invoice, [ie], ie.invoice_id != ^id)
+
+  defp on_other_invoices(on_invoice, _invoice), do: on_invoice
+
+  @doc """
+  Flat hours of all users booked for the month of `month` that are not on
+  another draft or issued invoice. Flat hours already on `invoice` (when
+  editing a draft) are included.
+  """
+  def billable_bookings(%Date{} = month, invoice \\ nil, opts \\ []) do
+    from(b in FlatBooking,
+      as: :booking,
+      where: b.month == ^Date.beginning_of_month(month),
+      order_by: [asc: b.id],
+      preload: [:user, :project]
+    )
+    |> exclude_invoiced_bookings(invoice)
+    |> maybe_lock(opts[:lock])
+    |> Repo.all()
   end
 
   defp maybe_lock(query, true), do: lock(query, "FOR UPDATE")
@@ -214,11 +241,12 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Months to pick for an invoice, newest first, as `{month, unbilled_minutes}`:
-  every month with time that is not invoiced yet, plus the current and the
-  previous month, the month of the draft being edited and the `shown` month.
+  every month with time entries or flat hours that are not invoiced yet,
+  plus the current and the previous month, the month of the draft being
+  edited and the `shown` month.
   """
   def month_choices(today, invoice \\ nil, shown \\ nil) do
-    unbilled =
+    unbilled_entries =
       from(e in TimeEntry,
         as: :entry,
         where: not is_nil(e.clock_out),
@@ -231,6 +259,18 @@ defmodule PotionZeitgeist.Invoicing do
       |> Repo.all()
       |> Map.new(fn {month, seconds} ->
         {month, seconds |> Decimal.new() |> Decimal.round(0) |> Decimal.to_integer() |> div(60)}
+      end)
+
+    unbilled =
+      from(b in FlatBooking,
+        as: :booking,
+        group_by: b.month,
+        select: {b.month, sum(b.minutes)}
+      )
+      |> exclude_invoiced_bookings(invoice)
+      |> Repo.all()
+      |> Enum.reduce(unbilled_entries, fn {month, minutes}, unbilled ->
+        Map.update(unbilled, month, minutes, &(&1 + minutes))
       end)
 
     current = Date.beginning_of_month(today)
@@ -250,6 +290,11 @@ defmodule PotionZeitgeist.Invoicing do
     Repo.exists?(from ie in InvoiceEntry, where: ie.time_entry_id == ^entry_id and ie.active)
   end
 
+  @doc "Whether flat hours are on a draft or issued invoice."
+  def booking_invoiced?(booking_id) do
+    Repo.exists?(from ie in InvoiceEntry, where: ie.flat_booking_id == ^booking_id and ie.active)
+  end
+
   @doc "Ids of the time entries billed on `invoice`."
   def entry_ids(%Invoice{id: nil}), do: []
 
@@ -258,6 +303,17 @@ defmodule PotionZeitgeist.Invoicing do
       from ie in InvoiceEntry,
         where: ie.invoice_id == ^id and not is_nil(ie.time_entry_id),
         select: ie.time_entry_id
+    )
+  end
+
+  @doc "Ids of the flat hours billed on `invoice`."
+  def booking_ids(%Invoice{id: nil}), do: []
+
+  def booking_ids(%Invoice{id: id}) do
+    Repo.all(
+      from ie in InvoiceEntry,
+        where: ie.invoice_id == ^id and not is_nil(ie.flat_booking_id),
+        select: ie.flat_booking_id
     )
   end
 
@@ -308,6 +364,7 @@ defmodule PotionZeitgeist.Invoicing do
       "rates" => last_item_values(:hourly_rate),
       "descriptions" => last_item_values(:description),
       "entry_ids" => [],
+      "booking_ids" => [],
       "manual_items" => []
     }
 
@@ -404,6 +461,7 @@ defmodule PotionZeitgeist.Invoicing do
       "descriptions" =>
         Map.merge(last_item_values(:description), item_values(invoice, :description)),
       "entry_ids" => invoice |> entry_ids() |> Enum.map(&to_string/1),
+      "booking_ids" => invoice |> booking_ids() |> Enum.map(&to_string/1),
       "manual_items" => manual_item_rows(invoice)
     }
   end
@@ -457,15 +515,16 @@ defmodule PotionZeitgeist.Invoicing do
   ## Preview and drafts
 
   @doc """
-  Items and totals for the selected entries, the rate fields and the other
-  items of the form, for the live summary. Never touches the database.
+  Items and totals for the selected time entries and flat hours, the rate
+  fields and the other items of the form, for the live summary. Never
+  touches the database.
 
   `:manual_errors` has the messages of the other items that are not
   complete, by row id and field (see
   `PotionZeitgeist.Invoicing.ManualItem.parse/1`); those count for nothing
   yet.
   """
-  def preview(entries, params) do
+  def preview(entries, bookings, params) do
     tax_mode = if params["tax_mode"] == "standard", do: "standard", else: "small_business"
 
     # Rounded as the saved draft stores it, so the summary shows the saved amounts.
@@ -474,7 +533,7 @@ defmodule PotionZeitgeist.Invoicing do
         do: Calculation.round_rate(parse_decimal(params["vat_rate"]) || Decimal.new(0)),
         else: Decimal.new(0)
 
-    time_items = build_items(entries, params)
+    time_items = build_items(entries, bookings, params)
     manual = manual_items(params, length(time_items))
     items = time_items ++ manual.items
 
@@ -516,7 +575,7 @@ defmodule PotionZeitgeist.Invoicing do
   defp row_id(%{"id" => id}, _index) when is_binary(id) and id != "", do: id
   defp row_id(_row, index), do: to_string(index)
 
-  defp build_items(entries, params) do
+  defp build_items(entries, bookings, params) do
     single_rate = parse_rate(params["hourly_rate"])
     rates = params["rates"] || %{}
     descriptions = params["descriptions"] || %{}
@@ -527,7 +586,7 @@ defmodule PotionZeitgeist.Invoicing do
         else: fn _group -> single_rate end
 
     entries
-    |> Calculation.group_entries()
+    |> Calculation.group_entries(bookings)
     |> Calculation.build_items(rate_for, fn group -> Map.get(descriptions, group.key) end)
   end
 
@@ -545,11 +604,12 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Creates a draft from the form params: the invoice fields, `"month"`
-  (`"2026-10"`), `"entry_ids"`, per project `"rates"` and `"descriptions"`
-  keyed by `PotionZeitgeist.Invoicing.Calculation.item_key/1`, and
-  `"manual_items"`, the rows of the other items (see
-  `PotionZeitgeist.Invoicing.ManualItem.rows/1`). It needs time entries,
-  other items or both.
+  (`"2026-10"`), `"entry_ids"`, `"booking_ids"` (flat hours), per project
+  `"rates"` and `"descriptions"` keyed by
+  `PotionZeitgeist.Invoicing.Calculation.item_key/1`, and `"manual_items"`,
+  the rows of the other items (see
+  `PotionZeitgeist.Invoicing.ManualItem.rows/1`). It needs time entries or
+  flat hours, other items, or both.
   """
   def create_draft(params), do: save_draft(%Invoice{}, params)
 
@@ -561,30 +621,23 @@ defmodule PotionZeitgeist.Invoicing do
     month = parse_month(params["month"])
     {period_start, period_end} = if month, do: month_range(month), else: {nil, nil}
 
-    entry_ids =
-      params
-      |> Map.get("entry_ids", [])
-      |> List.wrap()
-      |> Enum.map(&to_string/1)
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.uniq()
+    entry_ids = id_params(params, "entry_ids")
+    booking_ids = id_params(params, "booking_ids")
 
     Repo.transaction(fn ->
       invoice = if invoice.id, do: lock_invoice!(invoice.id, "draft"), else: invoice
 
-      # Lock the entries, so they cannot change while their time is billed.
-      entries =
+      # Lock the entries and flat hours, so they cannot change while their
+      # time is billed.
+      {entries, bookings} =
         if month do
-          wanted = MapSet.new(entry_ids)
-
-          month
-          |> billable_entries(invoice, lock: true)
-          |> Enum.filter(&MapSet.member?(wanted, to_string(&1.id)))
+          {month |> billable_entries(invoice, lock: true) |> only_ids(entry_ids),
+           month |> billable_bookings(invoice, lock: true) |> only_ids(booking_ids)}
         else
-          []
+          {[], []}
         end
 
-      time_items = build_items(entries, params)
+      time_items = build_items(entries, bookings, params)
       manual = manual_items(params, length(time_items))
       items = time_items ++ manual.items
 
@@ -592,16 +645,20 @@ defmodule PotionZeitgeist.Invoicing do
         invoice
         |> Invoice.draft_changeset(
           Map.merge(params, %{"period_start" => period_start, "period_end" => period_end}),
-          time?: entry_ids != []
+          time?: entry_ids != [] or booking_ids != []
         )
         |> put_totals(items)
-        |> validate_entries(entries, entry_ids, manual)
+        |> validate_entries(
+          length(entries) + length(bookings),
+          length(entry_ids) + length(booking_ids),
+          manual
+        )
         |> validate_manual_items(manual)
         |> validate_rates(time_items)
         |> validate_total()
 
       if changeset.valid? do
-        write_draft(changeset, items, entries)
+        write_draft(changeset, items, entries, bookings)
       else
         Repo.rollback(%{changeset | action: :validate})
       end
@@ -610,6 +667,21 @@ defmodule PotionZeitgeist.Invoicing do
       {:ok, invoice} -> {:ok, get_invoice!(invoice.id)}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  # The ids of `key` (selected time entries or flat hours), as strings.
+  defp id_params(params, key) do
+    params
+    |> Map.get(key, [])
+    |> List.wrap()
+    |> Enum.map(&to_string/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp only_ids(records, ids) do
+    wanted = MapSet.new(ids)
+    Enum.filter(records, &MapSet.member?(wanted, to_string(&1.id)))
   end
 
   # Rates may be typed with a German comma. Anything else that is not a plain
@@ -641,20 +713,22 @@ defmodule PotionZeitgeist.Invoicing do
     |> Ecto.Changeset.put_change(:gross_total, totals.gross)
   end
 
-  defp validate_entries(changeset, entries, entry_ids, manual) do
+  # `found` of the `selected` time entries and flat hours are still there
+  # to bill.
+  defp validate_entries(changeset, found, selected, manual) do
     cond do
-      entry_ids == [] and manual.items == [] and manual.errors == %{} ->
+      selected == 0 and manual.items == [] and manual.errors == %{} ->
         Ecto.Changeset.add_error(
           changeset,
           :entries,
-          "select at least one time entry or add another item"
+          "select at least one time entry or flat hours, or add another item"
         )
 
-      length(entries) < length(entry_ids) ->
+      found < selected ->
         Ecto.Changeset.add_error(
           changeset,
           :entries,
-          "some selected entries are no longer available (changed, running, or on another invoice)"
+          "some selected entries are no longer available (changed, deleted, running, or on another invoice)"
         )
 
       true ->
@@ -708,7 +782,7 @@ defmodule PotionZeitgeist.Invoicing do
   ]
 
   # Runs inside the transaction of save_draft/2.
-  defp write_draft(changeset, items, entries) do
+  defp write_draft(changeset, items, entries, bookings) do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     invoice =
@@ -734,22 +808,41 @@ defmodule PotionZeitgeist.Invoicing do
     descriptions =
       items |> Enum.filter(&InvoiceItem.time?/1) |> Map.new(&{&1.project_id, &1.description})
 
-    Enum.each(entries, fn entry ->
-      %InvoiceEntry{
-        invoice_id: invoice.id,
-        time_entry_id: entry.id,
-        date: NaiveDateTime.to_date(entry.clock_in),
-        minutes: Calculation.entry_minutes(entry),
-        description: Map.fetch!(descriptions, entry.project_id),
-        user_name: entry.user && entry.user.name,
-        notes: entry.notes
-      }
-      |> Ecto.Changeset.change()
-      |> Ecto.Changeset.unique_constraint(:time_entry_id,
-        name: :invoice_entries_active_time_entry_index
-      )
-      |> Repo.insert()
-      |> case do
+    rows =
+      Enum.map(entries, fn entry ->
+        %InvoiceEntry{
+          invoice_id: invoice.id,
+          time_entry_id: entry.id,
+          date: NaiveDateTime.to_date(entry.clock_in),
+          minutes: Calculation.entry_minutes(entry),
+          description: Map.fetch!(descriptions, entry.project_id),
+          user_name: entry.user && entry.user.name,
+          notes: entry.notes
+        }
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.unique_constraint(:time_entry_id,
+          name: :invoice_entries_active_time_entry_index
+        )
+      end) ++
+        Enum.map(bookings, fn booking ->
+          %InvoiceEntry{
+            invoice_id: invoice.id,
+            flat_booking_id: booking.id,
+            flat: true,
+            date: booking.month,
+            minutes: booking.minutes,
+            description: Map.fetch!(descriptions, booking.project_id),
+            user_name: booking.user && booking.user.name,
+            notes: booking.notes
+          }
+          |> Ecto.Changeset.change()
+          |> Ecto.Changeset.unique_constraint(:flat_booking_id,
+            name: :invoice_entries_active_flat_booking_index
+          )
+        end)
+
+    Enum.each(rows, fn row ->
+      case Repo.insert(row) do
         {:ok, _} ->
           :ok
 
@@ -780,8 +873,9 @@ defmodule PotionZeitgeist.Invoicing do
   end
 
   @doc """
-  Deletes a draft, which frees its time entries. Fails with `:not_draft` once
-  it is issued and with `:not_found` when it was deleted already.
+  Deletes a draft, which frees its time entries and flat hours. Fails with
+  `:not_draft` once it is issued and with `:not_found` when it was deleted
+  already.
   """
   def delete_draft(%Invoice{id: id}) do
     case Repo.delete_all(from i in Invoice, where: i.id == ^id and i.status == "draft") do
@@ -960,7 +1054,7 @@ defmodule PotionZeitgeist.Invoicing do
 
   @doc """
   Cancels an issued invoice. It keeps its number and stays listed as
-  cancelled; its time entries can be billed again.
+  cancelled; its time entries and flat hours can be billed again.
   """
   def cancel_invoice(%Invoice{id: id}) do
     Repo.transaction(fn ->

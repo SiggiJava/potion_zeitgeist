@@ -1,12 +1,15 @@
 defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   @moduledoc """
   Creates and edits invoice drafts: pick a month, select its unbilled time
-  entries, enter one hourly rate or one per project, add other items such
-  as material, and see the amount.
+  entries and flat hours, enter one hourly rate or one per project, add
+  other items such as material, and see the amount.
 
   The form works on plain params (not a changeset) because the selection,
   rates, descriptions and other items are not fields of the invoice. Errors
   of the last save are shown through `to_form/2`'s `:errors`.
+
+  Time entries and flat hours are selected by their ids, kept apart in
+  `:selected` and `:selected_bookings`.
 
   The other items are rows the page adds and removes itself, each with an
   id of its own, see `merge_manual_items/2`.
@@ -52,14 +55,15 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     {params, selected_ids} =
       case base do
         nil ->
-          {params, []}
+          {params, {[], []}}
 
-        # A corrected invoice bills the same month, entries and other items again.
+        # A corrected invoice bills the same month, entries, flat hours and
+        # other items again.
         %Invoice{status: "cancelled"} ->
           {params
            |> Map.put("month", Invoicing.month_param(base.period_start))
            |> Map.put("manual_items", Invoicing.manual_item_rows(base)),
-           Invoicing.entry_ids(base)}
+           {Invoicing.entry_ids(base), Invoicing.booking_ids(base)}}
 
         _ ->
           next_month = base.period_end |> Date.add(1) |> Date.beginning_of_month()
@@ -78,7 +82,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     socket =
       case selected_ids do
         :projects -> select_base_projects(socket, base)
-        ids -> select(socket, Enum.map(ids, &to_string/1))
+        {entry_ids, booking_ids} -> select(socket, entry_ids, booking_ids)
       end
 
     socket = if base_id && !from, do: put_flash(socket, :error, @base_deleted), else: socket
@@ -96,7 +100,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
      |> assign(:base_invoices, [])
      |> assign(:params, params)
      |> load_month(invoice.period_start)
-     |> select(params["entry_ids"])
+     |> select(params["entry_ids"], params["booking_ids"])
      |> refresh()}
   end
 
@@ -166,37 +170,50 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
   @impl true
   def handle_event("toggle_group", %{"key" => key}, socket) do
-    ids =
-      socket.assigns.groups
-      |> Enum.find(%{entries: []}, &(&1.key == key))
-      |> Map.fetch!(:entries)
-      |> Enum.map(&to_string(&1.id))
+    group = Enum.find(socket.assigns.groups, %{entries: [], bookings: []}, &(&1.key == key))
+    %{selected: selected, selected_bookings: selected_bookings} = socket.assigns
 
-    selected = socket.assigns.selected
+    entry_ids = Enum.map(group.entries, &to_string(&1.id))
+    booking_ids = Enum.map(group.bookings, &to_string(&1.id))
 
-    selected =
-      if Enum.all?(ids, &MapSet.member?(selected, &1)),
-        do: Enum.reduce(ids, selected, &MapSet.delete(&2, &1)),
-        else: Enum.reduce(ids, selected, &MapSet.put(&2, &1))
+    all? =
+      Enum.all?(entry_ids, &MapSet.member?(selected, &1)) and
+        Enum.all?(booking_ids, &MapSet.member?(selected_bookings, &1))
 
-    {:noreply, socket |> assign(:selected, selected) |> refresh()}
+    toggle = fn ids, set ->
+      if all?,
+        do: Enum.reduce(ids, set, &MapSet.delete(&2, &1)),
+        else: Enum.reduce(ids, set, &MapSet.put(&2, &1))
+    end
+
+    {:noreply,
+     socket
+     |> assign(:selected, toggle.(entry_ids, selected))
+     |> assign(:selected_bookings, toggle.(booking_ids, selected_bookings))
+     |> refresh()}
   end
 
   @impl true
   def handle_event("select_all", _params, socket) do
-    ids = Enum.map(socket.assigns.entries, &to_string(&1.id))
-    {:noreply, socket |> select(ids) |> refresh()}
+    %{entries: entries, bookings: bookings} = socket.assigns
+
+    {:noreply,
+     socket |> select(Enum.map(entries, & &1.id), Enum.map(bookings, & &1.id)) |> refresh()}
   end
 
   @impl true
   def handle_event("select_none", _params, socket) do
-    {:noreply, socket |> select([]) |> refresh()}
+    {:noreply, socket |> select([], []) |> refresh()}
   end
 
   @impl true
   def handle_event("save", %{"invoice" => incoming}, socket) do
     socket = apply_params(socket, incoming, nil)
-    params = Map.put(socket.assigns.params, "entry_ids", MapSet.to_list(socket.assigns.selected))
+
+    params =
+      socket.assigns.params
+      |> Map.put("entry_ids", MapSet.to_list(socket.assigns.selected))
+      |> Map.put("booking_ids", MapSet.to_list(socket.assigns.selected_bookings))
 
     result =
       case socket.assigns.invoice do
@@ -250,7 +267,9 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
     params =
       old
-      |> Map.merge(Map.drop(incoming, ["rates", "descriptions", "entry_ids", "manual_items"]))
+      |> Map.merge(
+        Map.drop(incoming, ["rates", "descriptions", "entry_ids", "booking_ids", "manual_items"])
+      )
       |> Map.put("rates", Map.merge(old["rates"] || %{}, drop_unused(incoming["rates"])))
       |> Map.put(
         "descriptions",
@@ -261,13 +280,14 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
     month = Invoicing.parse_month(params["month"]) || socket.assigns.month
     base_id = params["base_id"]
     selected = incoming |> Map.get("entry_ids", []) |> List.wrap()
+    selected_bookings = incoming |> Map.get("booking_ids", []) |> List.wrap()
 
     cond do
       month != socket.assigns.month ->
         socket
         |> assign(:params, Map.put(params, "month", Invoicing.month_param(month)))
         |> load_month(month)
-        |> select(selected)
+        |> select(selected, selected_bookings)
 
       target == ["invoice", "base_id"] and base_id not in [nil, ""] and
           base_id != old["base_id"] ->
@@ -276,7 +296,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
       true ->
         socket
         |> assign(:params, params)
-        |> select(selected)
+        |> select(selected, selected_bookings)
     end
   end
 
@@ -332,65 +352,81 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
 
   defp load_month(socket, month) do
     entries = Invoicing.billable_entries(month, socket.assigns.invoice)
+    bookings = Invoicing.billable_bookings(month, socket.assigns.invoice)
+    user_ids = Enum.map(entries, & &1.user_id) ++ Enum.map(bookings, & &1.user_id)
 
     socket
     |> assign(:month, month)
     |> assign(:entries, entries)
-    |> assign(:groups, Calculation.group_entries(entries))
-    |> assign(:show_users, entries |> Enum.map(& &1.user_id) |> Enum.uniq() |> length() > 1)
+    |> assign(:bookings, bookings)
+    |> assign(:groups, Calculation.group_entries(entries, bookings))
+    |> assign(:show_users, user_ids |> Enum.uniq() |> length() > 1)
     |> assign(:running_count, Invoicing.running_entry_count(month))
     |> assign(:month_options, month_options(socket.assigns.today, socket.assigns.invoice, month))
   end
 
-  # Only ids of entries shown for the month count.
-  defp select(socket, ids) do
-    shown = MapSet.new(socket.assigns.entries, &to_string(&1.id))
-    selected = ids |> Enum.map(&to_string/1) |> MapSet.new() |> MapSet.intersection(shown)
-    assign(socket, :selected, selected)
+  # Only ids of entries and flat hours shown for the month count.
+  defp select(socket, entry_ids, booking_ids) do
+    socket
+    |> assign(:selected, shown_ids(entry_ids, socket.assigns.entries))
+    |> assign(:selected_bookings, shown_ids(booking_ids, socket.assigns.bookings))
+  end
+
+  defp shown_ids(ids, records) do
+    shown = MapSet.new(records, &to_string(&1.id))
+    (ids || []) |> List.wrap() |> MapSet.new(&to_string/1) |> MapSet.intersection(shown)
   end
 
   defp select_base_projects(socket, base) do
     keys = base |> Invoicing.item_keys() |> MapSet.new()
+    billed? = &MapSet.member?(keys, Calculation.item_key(&1.project_id))
 
-    ids =
-      for entry <- socket.assigns.entries,
-          MapSet.member?(keys, Calculation.item_key(entry.project_id)),
-          do: to_string(entry.id)
-
-    select(socket, ids)
+    select(
+      socket,
+      for(entry <- socket.assigns.entries, billed?.(entry), do: entry.id),
+      for(booking <- socket.assigns.bookings, billed?.(booking), do: booking.id)
+    )
   end
 
   defp refresh(socket) do
-    %{entries: entries, selected: selected, params: params, errors: errors} = socket.assigns
-    selected_entries = Enum.filter(entries, &MapSet.member?(selected, to_string(&1.id)))
-    unselected = Enum.reject(entries, &MapSet.member?(selected, to_string(&1.id)))
+    %{params: params, errors: errors} = socket.assigns
+    entry? = &MapSet.member?(socket.assigns.selected, to_string(&1.id))
+    booking? = &MapSet.member?(socket.assigns.selected_bookings, to_string(&1.id))
+
+    {selected_entries, unselected_entries} = Enum.split_with(socket.assigns.entries, entry?)
+    {selected_bookings, unselected_bookings} = Enum.split_with(socket.assigns.bookings, booking?)
 
     group_stats =
       Map.new(socket.assigns.groups, fn group ->
-        chosen = Enum.filter(group.entries, &MapSet.member?(selected, to_string(&1.id)))
+        entries = Enum.filter(group.entries, entry?)
+        bookings = Enum.filter(group.bookings, booking?)
+        selected = length(entries) + length(bookings)
 
         {group.key,
          %{
-           selected: length(chosen),
-           all?: length(chosen) == length(group.entries),
-           minutes: chosen |> Enum.map(&Calculation.entry_minutes/1) |> Enum.sum()
+           selected: selected,
+           count: length(group.entries) + length(group.bookings),
+           all?: selected == length(group.entries) + length(group.bookings),
+           minutes: minutes(entries, bookings)
          }}
       end)
 
-    preview = Invoicing.preview(selected_entries, params)
+    preview = Invoicing.preview(selected_entries, selected_bookings, params)
 
     socket
     |> assign(:group_stats, group_stats)
     |> assign(:preview, preview)
     |> assign(:item_amounts, item_amounts(preview))
     |> assign(:show_item_errors?, Keyword.has_key?(errors, :manual_items))
-    |> assign(:unselected_count, length(unselected))
-    |> assign(
-      :unselected_minutes,
-      unselected |> Enum.map(&Calculation.entry_minutes/1) |> Enum.sum()
-    )
+    |> assign(:unselected_count, length(unselected_entries) + length(unselected_bookings))
+    |> assign(:unselected_minutes, minutes(unselected_entries, unselected_bookings))
     |> assign(:form, to_form(params, as: :invoice, errors: errors))
     |> assign(:due_date_gap, due_date_gap(params, socket.assigns.templates))
+  end
+
+  defp minutes(entries, bookings) do
+    Enum.sum(Enum.map(entries, &Calculation.entry_minutes/1)) +
+      Enum.sum(Enum.map(bookings, & &1.minutes))
   end
 
   defp due_date?(params), do: params["due_date"] not in [nil, ""]
@@ -441,6 +477,10 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
   end
 
   defp template_options(templates), do: Enum.map(templates, &{&1.name, to_string(&1.id)})
+
+  defp group_summary(stats) do
+    "· #{stats.selected} of #{stats.count} selected · #{Format.duration(stats.minutes)} h"
+  end
 
   defp group_name(%{project_name: nil}), do: "No project"
   defp group_name(%{project_name: name}), do: name
@@ -512,12 +552,13 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
         novalidate
       >
         <input type="hidden" name="invoice[entry_ids][]" value="" />
+        <input type="hidden" name="invoice[booking_ids][]" value="" />
 
         <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div class="space-y-6 min-w-0">
             <section class="card bg-base-100 shadow">
               <div class="card-body gap-3">
-                <h2 class="card-title text-base">1. Time entries</h2>
+                <h2 class="card-title text-base">1. Time entries and flat hours</h2>
 
                 <div class="grid gap-x-4 sm:grid-cols-2">
                   <.input
@@ -538,6 +579,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                 </div>
                 <p class="text-xs text-base-content/50 -mt-2">
                   Entries count for the month of their clock-in date (UTC), as in the export.
+                  Flat hours count for the month they are booked for (under My Entries).
                 </p>
 
                 <div
@@ -597,8 +639,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                       <div class="min-w-0">
                         <span class="font-semibold">{group_name(group)}</span>
                         <span class="text-sm text-base-content/60">
-                          · {@group_stats[group.key].selected} of {length(group.entries)} selected
-                          · {Format.duration(@group_stats[group.key].minutes)} h
+                          {group_summary(@group_stats[group.key])}
                         </span>
                       </div>
                       <button
@@ -615,6 +656,41 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                     </div>
                     <table class="table table-sm table-fixed w-full">
                       <tbody>
+                        <tr :for={booking <- group.bookings} id={"booking-row-#{booking.id}"}>
+                          <td class="w-10">
+                            <input
+                              type="checkbox"
+                              id={"booking-#{booking.id}"}
+                              name="invoice[booking_ids][]"
+                              value={booking.id}
+                              checked={MapSet.member?(@selected_bookings, to_string(booking.id))}
+                              class="checkbox checkbox-sm"
+                            />
+                          </td>
+                          <td class="w-24 whitespace-nowrap">
+                            <label for={"booking-#{booking.id}"}>
+                              {Calendar.strftime(booking.month, "%b %Y")}
+                            </label>
+                          </td>
+                          <td :if={@show_users} class="hidden @md:table-cell w-32 truncate text-sm">
+                            {booking.user && booking.user.name}
+                          </td>
+                          <td class="w-20 font-mono text-sm whitespace-nowrap">
+                            {Format.duration(booking.minutes)} h
+                          </td>
+                          <td class="text-sm text-base-content/70" title={booking.notes}>
+                            <span
+                              :if={@show_users}
+                              class="@md:hidden block truncate font-medium text-base-content"
+                            >
+                              {booking.user && booking.user.name}
+                            </span>
+                            <span class="block truncate">
+                              <span class="badge badge-ghost badge-sm">Flat hours</span>
+                              {booking.notes || ""}
+                            </span>
+                          </td>
+                        </tr>
                         <tr :for={entry <- group.entries} id={"entry-row-#{entry.id}"}>
                           <td class="w-10">
                             <input
@@ -960,7 +1036,7 @@ defmodule PotionZeitgeistWeb.Admin.InvoiceFormLive do
                 <h2 class="card-title text-base">Summary</h2>
 
                 <p :if={@preview.items == []} class="text-sm text-base-content/60">
-                  Select time entries or add other items to bill.
+                  Select time entries or flat hours, or add other items to bill.
                 </p>
 
                 <ul class="space-y-2">
