@@ -71,6 +71,18 @@ defmodule PotionZeitgeistWeb.DashboardLiveTest do
     assert PotionZeitgeist.Repo.reload(newest).clock_out == nil
   end
 
+  test "shows the clock-in time in Berlin time", %{conn: conn, running: running} do
+    {:ok, _view, html} = live(conn, ~p"/")
+
+    since =
+      running.clock_in
+      |> DateTime.from_naive!("Etc/UTC")
+      |> DateTime.shift_zone!("Europe/Berlin")
+      |> Calendar.strftime("%H:%M:%S")
+
+    assert html =~ "Since #{since}"
+  end
+
   test "picking another project asks whether to rebook or switch", %{conn: conn, beta: beta} do
     {:ok, view, _html} = live(conn, ~p"/")
     refute has_element?(view, "#project-change-modal")

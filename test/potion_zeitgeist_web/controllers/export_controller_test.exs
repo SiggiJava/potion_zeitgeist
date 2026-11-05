@@ -34,6 +34,8 @@ defmodule PotionZeitgeistWeb.ExportControllerTest do
 
     assert csv =~ "Date,User,Clock In,Clock Out,Duration,Project,Notes\n"
     assert length(String.split(csv, "\n", trim: true)) == 4
+    # Times in Berlin summer time, two hours after the stored UTC times.
+    assert csv =~ "2026-10-19,Anna,2026-10-19 10:00:00,2026-10-19 14:00:00,04:00:00,Website,\n"
   end
 
   test "admins can export the daily totals of all users", %{conn: conn, admin: admin} do

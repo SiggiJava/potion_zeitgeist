@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
   use PotionZeitgeistWeb, :live_view
 
-  alias PotionZeitgeist.{Accounts, Projects, TimeTracking}
+  alias PotionZeitgeist.{Accounts, LocalTime, Projects, TimeTracking}
 
   @invoiced_message "This entry is on an invoice. Delete the draft or cancel the invoice to change it."
 
@@ -19,6 +19,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
      |> assign(:entries, entries)
      |> assign(:editing_entry, nil)
      |> assign(:edit_changeset, nil)
+     |> assign(:edit_values, nil)
      |> assign(:edit_projects, [])
      |> assign(:confirm_delete_id, nil)}
   end
@@ -38,6 +39,7 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
      socket
      |> assign(:editing_entry, entry)
      |> assign(:edit_changeset, changeset)
+     |> assign(:edit_values, nil)
      |> assign(:edit_projects, Projects.list_bookable_projects(entry.project_id))}
   end
 
@@ -52,9 +54,8 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
   @impl true
   def handle_event("save_edit", %{"time_entry" => params}, socket) do
     entry = socket.assigns.editing_entry
-    params = sanitize_entry_params(params)
 
-    case TimeTracking.update_entry(entry, params) do
+    case TimeTracking.update_entry_from_form(entry, params) do
       {:ok, _} ->
         user = socket.assigns.viewed_user
 
@@ -74,7 +75,11 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
          |> put_flash(:error, @invoiced_message)}
 
       {:error, changeset} ->
-        {:noreply, assign(socket, :edit_changeset, changeset)}
+        # The form keeps showing the times as typed, next to their errors.
+        {:noreply,
+         socket
+         |> assign(:edit_changeset, changeset)
+         |> assign(:edit_values, Map.take(params, ["clock_in", "clock_out"]))}
     end
   end
 
@@ -114,30 +119,6 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
     end
   end
 
-  defp sanitize_entry_params(params) do
-    params
-    |> Map.update("clock_in", nil, &parse_datetime/1)
-    |> Map.update("clock_out", nil, fn
-      "" -> nil
-      v -> parse_datetime(v)
-    end)
-  end
-
-  defp parse_datetime(""), do: nil
-
-  defp parse_datetime(value) when is_binary(value) do
-    case NaiveDateTime.from_iso8601(String.replace(value, "T", " ") <> ":00") do
-      {:ok, dt} ->
-        dt
-
-      _ ->
-        case NaiveDateTime.from_iso8601(value) do
-          {:ok, dt} -> dt
-          _ -> nil
-        end
-    end
-  end
-
   defp duration_string(%{clock_out: nil}), do: "In progress"
 
   defp duration_string(entry) do
@@ -145,8 +126,12 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
     TimeTracking.format_duration(diff)
   end
 
-  defp format_dt_for_input(%NaiveDateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%dT%H:%M")
-  defp format_dt_for_input(_), do: ""
+  # What a time input shows: the time as typed after a failed save, else the
+  # stored time in the app's time zone.
+  defp time_input_value(%{} = typed, field, _stored) when is_map_key(typed, field),
+    do: typed[field]
+
+  defp time_input_value(_typed, _field, stored), do: LocalTime.input_value(stored)
 
   @impl true
   def render(assigns) do
@@ -159,6 +144,9 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
         <div class="flex-1">
           <h1 class="text-2xl font-bold">{@viewed_user.name}'s Entries</h1>
           <p class="text-sm text-base-content/60">{@viewed_user.email}</p>
+          <p id="time-zone-note" class="text-sm text-base-content/60">
+            Times in {LocalTime.zone()}
+          </p>
         </div>
         <div class="flex gap-2 flex-wrap">
           <a
@@ -212,14 +200,14 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
               <%= for entry <- @entries do %>
                 <tr>
                   <td class="font-medium">
-                    {NaiveDateTime.to_date(entry.clock_in) |> Date.to_string()}
+                    {entry.clock_in |> LocalTime.to_date() |> Date.to_string()}
                   </td>
                   <td class="font-mono text-sm">
-                    {Calendar.strftime(entry.clock_in, "%H:%M:%S")}
+                    {LocalTime.strftime(entry.clock_in, "%H:%M:%S")}
                   </td>
                   <td class="font-mono text-sm">
                     <%= if entry.clock_out do %>
-                      {Calendar.strftime(entry.clock_out, "%H:%M:%S")}
+                      {LocalTime.strftime(entry.clock_out, "%H:%M:%S")}
                     <% else %>
                       <span class="badge badge-success badge-sm">Active</span>
                     <% end %>
@@ -285,32 +273,36 @@ defmodule PotionZeitgeistWeb.Admin.UserEntriesLive do
       <%= if @editing_entry do %>
         <div class="modal modal-open">
           <div class="modal-box">
-            <h3 class="font-bold text-lg mb-4">Edit Time Entry</h3>
-            <.form :let={f} for={@edit_changeset} phx-submit="save_edit">
+            <h3 class="font-bold text-lg">Edit Time Entry</h3>
+            <p class="text-sm text-base-content/60 mb-4">Times in {LocalTime.zone()}</p>
+            <.form :let={f} id="edit-entry-form" for={@edit_changeset} phx-submit="save_edit">
               <div class="form-control mb-4">
-                <label class="label">
+                <label class="label" for="edit-entry-clock-in">
                   <span class="label-text font-medium">Clock In</span>
                 </label>
                 <input
                   type="datetime-local"
+                  id="edit-entry-clock-in"
                   name={f[:clock_in].name}
-                  value={format_dt_for_input(@editing_entry.clock_in)}
+                  value={time_input_value(@edit_values, "clock_in", @editing_entry.clock_in)}
                   class="input input-bordered w-full"
                   required
                 />
+                <%= if error = List.first(f[:clock_in].errors) do %>
+                  <label class="label">
+                    <span class="label-text-alt text-error">{translate_error(error)}</span>
+                  </label>
+                <% end %>
               </div>
               <div class="form-control mb-4">
-                <label class="label">
+                <label class="label" for="edit-entry-clock-out">
                   <span class="label-text font-medium">Clock Out</span>
                 </label>
                 <input
                   type="datetime-local"
+                  id="edit-entry-clock-out"
                   name={f[:clock_out].name}
-                  value={
-                    if @editing_entry.clock_out,
-                      do: format_dt_for_input(@editing_entry.clock_out),
-                      else: ""
-                  }
+                  value={time_input_value(@edit_values, "clock_out", @editing_entry.clock_out)}
                   class="input input-bordered w-full"
                 />
                 <%= if error = List.first(f[:clock_out].errors) do %>

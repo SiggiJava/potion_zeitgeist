@@ -1,7 +1,7 @@
 defmodule PotionZeitgeistWeb.ExportController do
   use PotionZeitgeistWeb, :controller
 
-  alias PotionZeitgeist.{Accounts, TimeTracking}
+  alias PotionZeitgeist.{Accounts, LocalTime, TimeTracking}
 
   # `?type=entries` exports every clock-in/clock-out pair. Without it the
   # export holds one total per user and day, split by project.
@@ -33,7 +33,7 @@ defmodule PotionZeitgeistWeb.ExportController do
     |> put_resp_content_type("text/csv")
     |> put_resp_header(
       "content-disposition",
-      "attachment; filename=\"#{filename_prefix}_#{kind}_#{Date.utc_today()}.csv\""
+      "attachment; filename=\"#{filename_prefix}_#{kind}_#{LocalTime.today()}.csv\""
     )
     |> send_resp(200, csv)
   end

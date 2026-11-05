@@ -2,10 +2,15 @@ defmodule PotionZeitgeist.TimeTracking.Export do
   @moduledoc """
   Builds the CSV exports for time entries.
 
-  Expects entries with `:user` and `:project` preloaded. Entries are assigned to
-  the date of their clock-in. Entries that are still running (no clock-out) are
-  not part of the daily totals.
+  Expects entries with `:user` and `:project` preloaded. Times are shown, and
+  entries are assigned to the day of their clock-in, in the app's time zone
+  (see `PotionZeitgeist.LocalTime`). Durations are the real time between
+  clock-in and clock-out, also across a change between summer and winter
+  time. Entries that are still running (no clock-out) are not part of the
+  daily totals.
   """
+
+  alias PotionZeitgeist.LocalTime
 
   @no_project "No project"
 
@@ -18,7 +23,7 @@ defmodule PotionZeitgeist.TimeTracking.Export do
   def daily_totals(entries) do
     entries
     |> Enum.filter(& &1.clock_out)
-    |> Enum.group_by(fn entry -> {entry.user_id, NaiveDateTime.to_date(entry.clock_in)} end)
+    |> Enum.group_by(fn entry -> {entry.user_id, LocalTime.to_date(entry.clock_in)} end)
     |> Enum.map(fn {{user_id, date}, day_entries} ->
       by_project =
         Enum.reduce(day_entries, %{}, fn entry, acc ->
@@ -83,7 +88,7 @@ defmodule PotionZeitgeist.TimeTracking.Export do
     rows =
       Enum.map(entries, fn entry ->
         [
-          entry.clock_in |> NaiveDateTime.to_date() |> Date.to_string(),
+          entry.clock_in |> LocalTime.to_date() |> Date.to_string(),
           user_name(entry),
           format_naive_dt(entry.clock_in),
           if(entry.clock_out, do: format_naive_dt(entry.clock_out), else: ""),
@@ -132,7 +137,7 @@ defmodule PotionZeitgeist.TimeTracking.Export do
   defp project_name(_entry), do: ""
 
   defp format_naive_dt(dt) do
-    Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S")
+    LocalTime.strftime(dt, "%Y-%m-%d %H:%M:%S")
   end
 
   defp to_csv(rows) do
