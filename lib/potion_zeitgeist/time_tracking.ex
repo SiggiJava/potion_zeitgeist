@@ -176,16 +176,19 @@ defmodule PotionZeitgeist.TimeTracking do
   `{:error, changeset}` for a time that cannot be read or does not exist.
   """
   def update_entry_from_form(%TimeEntry{} = entry, params) do
-    clock_in = LocalTime.parse_input(params["clock_in"], entry.clock_in)
+    # In the hour that happens twice when summer time ends, each time is
+    # placed so that the clock-in does not come after the clock-out.
+    first_clock_out = LocalTime.parse_input(params["clock_out"], entry.clock_out)
 
-    not_before =
-      case clock_in do
-        {:ok, %NaiveDateTime{} = time} -> time
-        _ -> entry.clock_in
-      end
+    clock_in =
+      LocalTime.parse_input(params["clock_in"], entry.clock_in,
+        not_after: time_or(first_clock_out, nil)
+      )
 
     clock_out =
-      LocalTime.parse_input(params["clock_out"], entry.clock_out, not_before: not_before)
+      LocalTime.parse_input(params["clock_out"], entry.clock_out,
+        not_before: time_or(clock_in, entry.clock_in)
+      )
 
     case {clock_in, clock_out} do
       {{:ok, clock_in}, {:ok, clock_out}} ->
@@ -204,6 +207,9 @@ defmodule PotionZeitgeist.TimeTracking do
         {:error, %{changeset | action: :update}}
     end
   end
+
+  defp time_or({:ok, %NaiveDateTime{} = time}, _default), do: time
+  defp time_or(_result, default), do: default
 
   defp add_time_error(changeset, field, {:error, message}),
     do: Ecto.Changeset.add_error(changeset, field, message)

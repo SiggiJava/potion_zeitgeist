@@ -91,14 +91,14 @@ On first launch, visiting any page will redirect you to **`/setup`**, where you 
 
 ### Time zone
 
-Clock-in and clock-out times are stored in UTC. The app shows them, and reads times typed into the edit forms, in one time zone for everyone, with summer and winter time: `Europe/Berlin` unless the environment variable `TIME_ZONE` names another one (an IANA name such as `Europe/Vienna` or `Europe/Zurich`). Days and months begin at midnight in that zone, for the dashboard's total of today, the daily totals in the CSV export and the month of an invoice. Durations are the real time worked, so a night shift across the change to winter time counts the extra hour.
+Clock-in and clock-out times are stored in UTC. The app shows them, and reads times typed into the edit forms, in one time zone for everyone, with summer and winter time: `Europe/Berlin` unless the environment variable `TIME_ZONE` names another one (an IANA name of the form Area/City such as `Europe/Vienna` or `Europe/Zurich`; short names such as `CET` are refused, since the database would read them without summer time). Days and months begin at midnight in that zone, for the dashboard's total of today, the daily totals in the CSV export and the month of an invoice. Durations are the real time worked, so a night shift across the change to winter time counts the extra hour.
 
 - `mix phx.server`: `TIME_ZONE=Europe/Vienna mix phx.server` (only needed for a zone other than Europe/Berlin).
 - Docker: `TIME_ZONE=Europe/Vienna` in `.env`, then `docker compose up -d`.
 
 Changing the zone later only changes how the stored times are shown. The app does not start with a name it does not know, and says so in its log.
 
-When summer time ends, the hour from 2:00 to 3:00 happens twice. In the edit form a time in that hour is taken as the first of the two (still summer time) unless that would lie before the clock-in; a time the form already showed is kept as it was. A time in the hour that is skipped when summer time begins (2:00 to 3:00 in Germany) is refused.
+When summer time ends, the hour from 2:00 to 3:00 happens twice. In the edit form a time the form already showed is kept as it was. A changed time in that hour stays on the side of the change the field was on (summer or winter time), as long as the clock-in stays before the clock-out; otherwise it is the first of the two (still summer time). A time in the hour that is skipped when summer time begins (2:00 to 3:00 in Germany) is refused.
 
 ---
 

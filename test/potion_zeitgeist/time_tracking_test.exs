@@ -97,6 +97,36 @@ defmodule PotionZeitgeist.TimeTrackingTest do
       assert updated.clock_out == ~N[2026-10-25 01:40:00]
     end
 
+    test "keeps a changed clock-in in the hour that happens twice on its side of the change",
+         %{user: user} do
+      # 02:05 to 02:40 winter time (01:05 to 01:40 UTC) on 25 October.
+      entry = entry_fixture(user, "2026-10-25 01:05:00", "2026-10-25 01:40:00")
+
+      assert {:ok, updated} =
+               TimeTracking.update_entry_from_form(entry, %{
+                 "clock_in" => "2026-10-25T02:10",
+                 "clock_out" => "2026-10-25T02:40"
+               })
+
+      assert updated.clock_in == ~N[2026-10-25 01:10:00]
+      assert updated.clock_out == ~N[2026-10-25 01:40:00]
+    end
+
+    test "keeps a changed clock-out in the hour that happens twice on its side of the change",
+         %{user: user} do
+      # 02:05 summer time (00:05 UTC) to 02:40 winter time (01:40 UTC).
+      entry = entry_fixture(user, "2026-10-25 00:05:00", "2026-10-25 01:40:00")
+
+      assert {:ok, updated} =
+               TimeTracking.update_entry_from_form(entry, %{
+                 "clock_in" => "2026-10-25T02:05",
+                 "clock_out" => "2026-10-25T02:45"
+               })
+
+      assert updated.clock_in == ~N[2026-10-25 00:05:00]
+      assert updated.clock_out == ~N[2026-10-25 01:45:00]
+    end
+
     test "still refuses a clock-out before the clock-in", %{user: user} do
       entry = entry_fixture(user, "2026-11-05 20:17:00", "2026-11-05 22:00:00")
 

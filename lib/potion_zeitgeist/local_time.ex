@@ -21,21 +21,26 @@ defmodule PotionZeitgeist.LocalTime do
 
   @doc """
   Raises with a readable message when `zone` is not a time zone the app
-  knows. Runs when the app starts, so a mistyped `TIME_ZONE` stops it
+  accepts. Runs when the app starts, so a mistyped `TIME_ZONE` stops it
   instead of showing wrong times.
+
+  Only IANA names of the form Area/Location (and `"UTC"`) are accepted:
+  Postgres, which sorts entries into months for the invoice form, reads
+  short names such as CET as a fixed offset without summer time.
   """
   def validate!(zone \\ zone()) do
     if known_zone?(zone) do
       :ok
     else
       raise ArgumentError,
-            "TIME_ZONE #{inspect(zone)} is not a known time zone. " <>
-              "Use an IANA name such as Europe/Berlin or Europe/Vienna."
+            "TIME_ZONE #{inspect(zone)} is not a time zone the app accepts. " <>
+              "Use an IANA name of the form Area/City, such as Europe/Berlin or Europe/Vienna."
     end
   end
 
   defp known_zone?(zone) when is_binary(zone) do
-    match?({:ok, _}, DateTime.shift_zone(DateTime.utc_now(), zone))
+    (zone == "UTC" or String.contains?(zone, "/")) and
+      match?({:ok, _}, DateTime.shift_zone(DateTime.utc_now(), zone))
   end
 
   defp known_zone?(_zone), do: false
@@ -134,10 +139,12 @@ defmodule PotionZeitgeist.LocalTime do
   input does not show, and in the hour that happens twice when summer time
   ends, where the same wall-clock time stands for two moments.
 
-  A new time in that hour is taken as the earlier moment (still summer
-  time), unless that lies before `opts[:not_before]` (the clock-in, for a
-  clock-out); then it is the later one. A time in the hour skipped when
-  summer time begins does not exist and is refused.
+  A new time in that hour is one of its two moments: one that is neither
+  before `opts[:not_before]` nor after `opts[:not_after]` (for a clock-out
+  the clock-in, for a clock-in the clock-out), and of those the one on the
+  same side of the change as `current` (same UTC offset), else the earlier
+  one (still summer time). A time in the hour skipped when summer time
+  begins does not exist and is refused.
   """
   def parse_input(value, current \\ nil, opts \\ [])
 
@@ -158,7 +165,7 @@ defmodule PotionZeitgeist.LocalTime do
           {:ok, local} ->
             if current && local == to_local(current),
               do: {:ok, current},
-              else: from_local(local, opts[:not_before])
+              else: from_local(local, current, opts)
 
           :error ->
             {:error, "is invalid"}
@@ -178,15 +185,13 @@ defmodule PotionZeitgeist.LocalTime do
     end
   end
 
-  defp from_local(local, not_before) do
+  defp from_local(local, current, opts) do
     case to_utc(local) do
       {:ok, utc} ->
         {:ok, utc}
 
       {:ambiguous, earlier, later} ->
-        if not_before && NaiveDateTime.compare(earlier, not_before) == :lt,
-          do: {:ok, later},
-          else: {:ok, earlier}
+        {:ok, pick_moment(local, [earlier, later], current, opts)}
 
       {:error, :gap} ->
         {:error, "does not exist: the clocks in #{zone()} skip this hour when summer time begins"}
@@ -195,4 +200,25 @@ defmodule PotionZeitgeist.LocalTime do
         {:error, "is invalid"}
     end
   end
+
+  # Of the two moments of `local` in the hour that happens twice: those
+  # within the bounds (both when neither is), then the one with the UTC
+  # offset of `current`, else the earlier one.
+  defp pick_moment(local, moments, current, opts) do
+    within =
+      Enum.filter(moments, fn moment ->
+        not_before?(moment, opts[:not_before]) and not_after?(moment, opts[:not_after])
+      end)
+
+    choices = if within == [], do: moments, else: within
+    offset = current && NaiveDateTime.diff(to_local(current), current)
+
+    Enum.find(choices, hd(choices), &(offset == NaiveDateTime.diff(local, &1)))
+  end
+
+  defp not_before?(_moment, nil), do: true
+  defp not_before?(moment, bound), do: NaiveDateTime.compare(moment, bound) != :lt
+
+  defp not_after?(_moment, nil), do: true
+  defp not_after?(moment, bound), do: NaiveDateTime.compare(moment, bound) != :gt
 end

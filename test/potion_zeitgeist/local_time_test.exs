@@ -12,12 +12,15 @@ defmodule PotionZeitgeist.LocalTimeTest do
   end
 
   test "an unknown time zone stops the app with a readable message" do
-    assert_raise ArgumentError, ~r/TIME_ZONE "Europe\/Berln" is not a known time zone/, fn ->
+    assert_raise ArgumentError, ~r/TIME_ZONE "Europe\/Berln" is not a time zone/, fn ->
       LocalTime.validate!("Europe/Berln")
     end
 
     assert_raise ArgumentError, fn -> LocalTime.validate!(nil) end
+    # Postgres would read CET as a fixed offset without summer time.
+    assert_raise ArgumentError, ~r/Area\/City/, fn -> LocalTime.validate!("CET") end
     assert LocalTime.validate!("Europe/Vienna") == :ok
+    assert LocalTime.validate!("UTC") == :ok
   end
 
   describe "stored UTC times as local time" do
@@ -139,6 +142,25 @@ defmodule PotionZeitgeist.LocalTimeTest do
 
       assert LocalTime.parse_input("2026-10-25T02:30", nil, not_before: ~N[2026-10-24 23:30:00]) ==
                {:ok, ~N[2026-10-25 00:30:00]}
+
+      # A clock-in before a clock-out at 02:20 summer time (00:20 UTC).
+      assert LocalTime.parse_input("2026-10-25T02:10", nil, not_after: ~N[2026-10-25 00:20:00]) ==
+               {:ok, ~N[2026-10-25 00:10:00]}
+    end
+
+    test "in the hour that happens twice stay on the side of the change they were on" do
+      # Was 02:05 winter time (01:05 UTC), changed to 02:10.
+      assert LocalTime.parse_input("2026-10-25T02:10", ~N[2026-10-25 01:05:00]) ==
+               {:ok, ~N[2026-10-25 01:10:00]}
+
+      # Was 02:05 summer time (00:05 UTC).
+      assert LocalTime.parse_input("2026-10-25T02:10", ~N[2026-10-25 00:05:00]) ==
+               {:ok, ~N[2026-10-25 00:10:00]}
+
+      # Unless the bounds rule that side out.
+      assert LocalTime.parse_input("2026-10-25T02:10", ~N[2026-10-25 01:05:00],
+               not_after: ~N[2026-10-25 00:40:00]
+             ) == {:ok, ~N[2026-10-25 00:10:00]}
     end
 
     test "in the skipped hour are refused" do
